@@ -340,6 +340,7 @@ void read_bc(Simulation* simulation, EquationParameters* eq_params, eqType& lEq,
     // [NOTE] This is not implemented.
     if (bc_params->bct_file_path.defined()) {
       auto file_name = bc_params->bct_file_path.value();
+      throw std::runtime_error("[read_bc] read_bct is not imlemented.");
       read_bct(com_mod, lBc.gm, com_mod.msh[iM].fa[iFa], file_name);
 
     } else {
@@ -1366,11 +1367,14 @@ void read_eq(Simulation* simulation, EquationParameters* eq_params, eqType& lEq)
     if (eq_params->couple_to_genBC.defined()) {
       cplBC.useGenBC = true;
       cplbc_type_str = eq_params->couple_to_genBC.type.value();
+    } else if (eq_params->couple_to_svZeroD.defined()) {
+      cplBC.useSvZeroD = true;
+      cplbc_type_str = eq_params->couple_to_svZeroD.type.value();
     } else if (eq_params->couple_to_cplBC.defined()) {
       cplbc_type_str = eq_params->couple_to_cplBC.type.value();
     }
 
-    if (eq_params->couple_to_genBC.defined() || eq_params->couple_to_cplBC.defined()) {
+    if (eq_params->couple_to_genBC.defined() || eq_params->couple_to_cplBC.defined() || eq_params->couple_to_svZeroD.defined()) {
       try {
         cplBC.schm = consts::cplbc_name_to_type.at(cplbc_type_str);
       } catch (const std::out_of_range& exception) {
@@ -1381,9 +1385,16 @@ void read_eq(Simulation* simulation, EquationParameters* eq_params, eqType& lEq)
 
     if (cplBC.schm != consts::CplBCType::cplBC_NA) { 
       if (cplBC.useGenBC) {
-        cplBC.binPath = eq_params->couple_to_genBC.zerod_code_file_path.value();
+        if (cplBC.binPath.size() == 0){
+            cplBC.binPath = eq_params->couple_to_genBC.zerod_code_file_path.value();
+         }
         cplBC.commuName = "GenBC.int";
         cplBC.nX = 0;
+        cplBC.xp.resize(cplBC.nX);
+      } else if (cplBC.useSvZeroD) {
+        cplBC.commuName = "svZeroD_interface.dat";
+        cplBC.nX = 0;
+        cplBC.xo = 0;
       } else {
         auto& cplBC_params = eq_params->couple_to_cplBC;
         cplBC.nX = cplBC_params.number_of_unknowns.value();

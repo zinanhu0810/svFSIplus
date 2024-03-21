@@ -172,6 +172,7 @@ set(CSRCS
   shells.h shells.cpp
   stokes.h stokes.cpp
   sv_struct.h sv_struct.cpp
+  svZeroD_subroutines.h svZeroD_subroutines.cpp
   txt.h txt.cpp
   utils.h utils.cpp
   ustruct.h ustruct.cpp
@@ -189,6 +190,8 @@ set(CSRCS
   Timer.h
 
   SPLIT.c
+  
+  svZeroD_interface/LPNSolverInterface.h svZeroD_interface/LPNSolverInterface.cpp
 )
 
   # Set PETSc interace code.

@@ -43,6 +43,7 @@
 #include "ustruct.h"
 #include "utils.h"
 #include <math.h>
+#include "svZeroD_subroutines.h"
 
 #ifdef WITH_TRILINOS
 #include "trilinos_linear_solver.h"
@@ -67,6 +68,8 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
   #endif
 
   const int iEq = 0;
+  // NOTE: For coupling with svZeroDPlus, absTol needs to be > 1e-8 to be compatible with the default convergence tolerance of svZeroDPlus (1e-8)
+  // If this is not true, the finite difference computation of bc.r below results in zero because the perturbation is below the svZeroDPlus tolerance 
   const double absTol = 1.0e-8;
   const double relTol = 1.0e-5;
 
@@ -119,8 +122,9 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
       auto& fa = com_mod.msh[iM].fa[iFa];
       // Compute flowrates at 3D Neumann boundaries at timesteps n and n+1
       if (utils::btest(bc.bType, iBC_Neu)) {
-        // If struct or ustruct, use old and new configurations to compute flowrate integral
-        if ((cPhys == EquationType::phys_struct) || (cPhys == EquationType::phys_ustruct)) {
+        // If fluid, FSI, or CMM, use reference configuration to compute flowrate integral
+        // Note that for FSI, mvMsh will modify geometry in gnnb()
+        if (cPhys == EquationType::phys_fluid) || (cPhys == EquationType::phys_FSI) || (cPhys == EquationType::phys_CMM)) {
 
           // Must use follower pressure load for 0D coupling with struct/ustruct
           if (!bc.flwP) { 
@@ -129,11 +133,15 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
           cfg_o = MechanicalConfigurationType::old_timestep;
           cfg_n = MechanicalConfigurationType::new_timestep;
         }
-        // If fluid, FSI, or CMM, use reference configuration to compute flowrate integral
-        // Note that for FSI, mvMsh will modify geometry in gnnb()
-        else if ((cPhys == EquationType::phys_fluid) || (cPhys == EquationType::phys_FSI) || (cPhys == EquationType::phys_CMM)) {
-          cfg_o = MechanicalConfigurationType::reference;
-          cfg_n = MechanicalConfigurationType::reference;
+        // If struct or ustruct, use old and new configurations to compute flowrate integral
+        else if ((cPhys == EquationType::phys_struct) || (cPhys == EquationType::phys_ustruct)) {
+
+          // Must use follower pressure load for 0D coupling with struct/ustruct
+          if (!bc.flwP) { 
+            throw std::runtime_error("[calc_der_cpl_bc]  Follower pressure load must be used for 0D coupling with struct/ustruct");
+          }
+          cfg_o = MechanicalConfigurationType::old_timestep;
+          cfg_n = MechanicalConfigurationType::new_timestep;
         }
         else {
           throw std::runtime_error("[calc_der_cpl_bc]  Invalid physics type for 0D coupling");
@@ -172,7 +180,9 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
   // Call genBC or cplBC to get updated pressures or flowrates.
   if (cplBC.useGenBC) {
      set_bc::genBC_Integ_X(com_mod, cm_mod, "D");
-   } else {
+   } else if (cplBC.useSvZeroD) {
+     svZeroD::calc_svZeroD(com_mod, cm_mod, 'D');
+   }else {
      set_bc::cplBC_Integ_X(com_mod, cm_mod, RCRflag);
   }
 
@@ -211,14 +221,17 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
     int i = bc.cplBCptr;
 
     if (i != -1 && utils::btest(bc.bType, iBC_Neu)) {
-
+        double orgY = cplBC.fa[i].y;
+        double orgQ = cplBC.fa[i].Qn;
         // Finite difference perturbation in flowrate
         cplBC.fa[i].Qn = orgQ[i] + diff;
 
         // Call genBC or cplBC again with perturbed flowrate
         if (cplBC.useGenBC) {
            set_bc::genBC_Integ_X(com_mod, cm_mod, "D");
-         } else {
+        } else if (cplBC.useSvZeroD) {
+          svZeroD::calc_svZeroD(com_mod, cm_mod, 'D');
+        } else {
            set_bc::cplBC_Integ_X(com_mod, cm_mod, RCRflag);
         }
 
@@ -229,7 +242,7 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
         for (size_t j = 0; j < cplBC.fa.size(); j++) {
           cplBC.fa[j].y = orgY[j];
           cplBC.fa[j].Qn = orgQ[j];
-}
+        }
      }
   }
 }
@@ -716,8 +729,14 @@ void set_bc_cpl(ComMod& com_mod, CmMod& cm_mod)
       if (ptr != -1) {
         // Compute flowrates at 3D Neumann boundaries at timesteps n and n+1
         if (utils::btest(bc.bType,iBC_Neu)) {
+          // If fluid, FSI, or CMM, use reference configuration to compute flowrate integral
+          // Note that for FSI, mvMsh will modify geometry in gnnb()
+          if ((cPhys == EquationType::phys_fluid) || (cPhys == EquationType::phys_FSI) || (cPhys == EquationType::phys_CMM)) {
+            cfg_o = MechanicalConfigurationType::reference;
+            cfg_n = MechanicalConfigurationType::reference;
+          }
           // If struct or ustruct, use old and new configurations to compute flowrate integral
-          if ((cPhys == EquationType::phys_struct) || (cPhys == EquationType::phys_ustruct)) {
+          else if ((cPhys == EquationType::phys_struct) || (cPhys == EquationType::phys_ustruct)) {
 
             // Must use follower pressure load for 0D coupling with struct/ustruct
             if (!bc.flwP) { 
@@ -725,12 +744,6 @@ void set_bc_cpl(ComMod& com_mod, CmMod& cm_mod)
             }
             cfg_o = MechanicalConfigurationType::old_timestep;
             cfg_n = MechanicalConfigurationType::new_timestep;
-          }
-          // If fluid, FSI, or CMM, use reference configuration to compute flowrate integral
-          // Note that for FSI, mvMsh will modify geometry in gnnb()
-          else if ((cPhys == EquationType::phys_fluid) || (cPhys == EquationType::phys_FSI) || (cPhys == EquationType::phys_CMM)) {
-            cfg_o = MechanicalConfigurationType::reference;
-            cfg_n = MechanicalConfigurationType::reference;
           }
           else {
             throw std::runtime_error("[set_bc_cpl]  Invalid physics type for 0D coupling");
@@ -756,6 +769,8 @@ void set_bc_cpl(ComMod& com_mod, CmMod& cm_mod)
     // Updates pressure or flowrates stored in cplBC.fa[i].y
     if (cplBC.useGenBC) {
        set_bc::genBC_Integ_X(com_mod, cm_mod, "D");
+    } else if (cplBC.useSvZeroD){
+      svZeroD::calc_svZeroD(com_mod, cm_mod, 'D');
     } else {
        set_bc::cplBC_Integ_X(com_mod, cm_mod, RCRflag);
     }
