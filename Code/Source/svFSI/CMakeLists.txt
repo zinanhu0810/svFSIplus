@@ -49,7 +49,8 @@ if(SV_USE_TRILINOS)
       MESSAGE(WARNING "Trilinos_FOUND is true but Trilinos_LIBRARIES is empty. This suggests that FIND_PACKAGE(Trilinos) failed quietly. Proceed with caution.")
     endif()
 
-    set(USE_TRILINOS 1)
+    MESSAGE("Setting WITH_TRILINOS to true\n")
+    set(WITH_TRILINOS 1)
   ELSE()
     MESSAGE(WARNING "Could not find Trilinos. Compiling svFSI without Trilinos.")
   ENDIF()
@@ -57,65 +58,20 @@ if(SV_USE_TRILINOS)
 endif()
 
 # add trilinos flags and defines
-if(USE_TRILINOS)
+if(WITH_TRILINOS)
   ADD_DEFINITIONS(-DWITH_TRILINOS)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-endif()
-
-# Build with the PETSc linear algebra package.
-#
-if(NOT "${SV_PETSC_DIR}" STREQUAL "")
-
-   if(NOT EXISTS ${SV_PETSC_DIR})
-      message(ERROR "The PETSc directory ${SV_PETSC_DIR} could not be found.")
-   endif()
-
-   if(NOT EXISTS "${SV_PETSC_DIR}/include")
-      message(ERROR "The PETSc include directory ${SV_PETSC_DIR}/include could not be found.")
-   endif()
-
-   if(NOT EXISTS "${SV_PETSC_DIR}/lib")
-      message(ERROR "The PETSc library directory ${SV_PETSC_DIR}/lib could not be found.")
-   endif()
-
-  set(PETSC_INCLUDE_DIRS "${SV_PETSC_DIR}/include;${SV_PETSC_DIR}/../include")
-  set(PETSC_LIBRARY_DIRS "-L${SV_PETSC_DIR}/lib -lpetsc")
-  message("\nBuilding with the PETSc package; the include and libraries directories are: ")
-  message("  PETSC_LIBRARY_DIRS = ${PETSC_LIBRARY_DIRS}")
-  message("  PETSC_INCLUDE_DIRS = ${PETSC_INCLUDE_DIRS}")
-
-  # Set PETSc include directory.
-  include_directories(${PETSC_INCLUDE_DIRS})
-
-  # Set C++ directive to use PETSc in svFSIplus code.
-  ADD_DEFINITIONS(-DWITH_PETSC)
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pedantic -std=c99")
-
-  set(USE_PETSC 1)
-
-else()
-
-  set(USE_PETSC 0)
-
-endif()
-
-if(ENABLE_ARRAY_INDEX_CHECKING)
-  ADD_DEFINITIONS(-DENABLE_ARRAY_INDEX_CHECKING)
 endif()
 
 # svFSI requires LAPACK
 find_package(BLAS REQUIRED)
 find_package(LAPACK REQUIRED)
 
-# Include VTK either from a local build using SV_LOCAL_VTK_PATH
-# or from a default installed version.
+# Including VTK produces warnings when compiling Fortran code.
 #
-if("${SV_LOCAL_VTK_PATH}" STREQUAL "")
-  find_package(VTK REQUIRED ) 
-else()
-  find_package(VTK PATHS ${SV_LOCAL_VTK_PATH} NO_DEFAULT_PATH REQUIRED) 
-endif()
-
+#   -iframe is valid for C/C++/ObjC/ObjC++ but not for Fortran
+#
+find_package(VTK REQUIRED)
 include(${VTK_USE_FILE})
 
 set(lib ${SV_LIB_SVFSI_NAME})
@@ -123,7 +79,7 @@ set(lib ${SV_LIB_SVFSI_NAME})
 set(CSRCS 
   Array3.h Array3.cpp 
   Array.h Array.cpp
-  Tensor4.h Tensor4.cpp
+  Tensor4.h 
   Vector.h Vector.cpp 
 
   lapack_defs.h
@@ -156,7 +112,6 @@ set(CSRCS
   ls.h ls.cpp
   main.cpp
   mat_fun.h mat_fun.cpp
-  mat_fun_carray.h mat_fun_carray.cpp
   mat_models.h mat_models.cpp
   mesh.h mesh.cpp
   nn.h nn.cpp
@@ -172,6 +127,7 @@ set(CSRCS
   shells.h shells.cpp
   stokes.h stokes.cpp
   sv_struct.h sv_struct.cpp
+  svZeroD_subroutines.h svZeroD_subroutines.cpp
   txt.h txt.cpp
   utils.h utils.cpp
   ustruct.h ustruct.cpp
@@ -189,14 +145,11 @@ set(CSRCS
   Timer.h
 
   SPLIT.c
+
+  svZeroD_interface/LPNSolverInterface.h svZeroD_interface/LPNSolverInterface.cpp
 )
 
-  # Set PETSc interace code.
-  if(USE_PETSC)
-     #set(CSRCS ${CSRCS} petsc_linear_solver.c)
-  endif()
-
-if(USE_TRILINOS)
+if(WITH_TRILINOS)
   set(CSRCS ${CSRCS} trilinos_linear_solver.cpp)
 
   # trilinos directories and libraries
@@ -212,6 +165,9 @@ simvascular_add_executable(${SV_SVFSI_EXE}
   INSTALL_SCRIPT_NAME "svfsi"
   INSTALL_COMP CoreExecutables
   INSTALL_DESTINATION ${SV_INSTALL_RUNTIME_DIR})
+
+message("##### TINY  ${TINYXML_LIBRARY_NAME}")
+message("##### TET ${TETGEN_LIBRARY_NAME}")
 
 target_link_libraries(${SV_SVFSI_EXE}
   ${GLOBAL_LIBRARIES}
@@ -232,12 +188,8 @@ if(SV_MPI_EXTRA_LIBRARY)
   target_link_libraries(${SV_SVFSI_EXE} ${SV_MPI_EXTRA_LIBRARY})
 endif()
 
-if(USE_TRILINOS)
+if(WITH_TRILINOS)
   target_link_libraries(${SV_SVFSI_EXE} ${Trilinos_LIBRARIES} ${Trilinos_TPL_LIBRARIES})
-endif()
-
-if(USE_PETSC)
-  target_link_libraries(${SV_SVFSI_EXE} ${PETSC_LIBRARY_DIRS})
 endif()
 
 # coverage
@@ -260,56 +212,4 @@ if(ENABLE_COVERAGE)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 
-# unit tests and Google Test
-if(ENABLE_UNIT_TEST)
-
-  # link pthread on ubuntu20
-  find_package(Threads REQUIRED)
-
-  # install Google Test
-  include(FetchContent)
-  FetchContent_Declare(
-    googletest
-    URL https://github.com/google/googletest/archive/03597a01ee50ed33e9dfd640b249b4be3799d395.zip
-  )
-  FetchContent_MakeAvailable(googletest)
-  enable_testing()
-  include(GoogleTest)
-
-  # add test.cpp for unit test
-
-  # remove the main.cpp and add test.cpp
-  list(APPEND CSRCS "../../../tests/unitTests/test.cpp")
-  list(REMOVE_ITEM CSRCS "main.cpp")
-  
-  # include source files (same as what svFSI does except for main.cpp)
-  add_executable(run_all_unit_tests ${CSRCS})
-  
-  # libraries
-  target_link_libraries(run_all_unit_tests
-    ${GLOBAL_LIBRARIES}
-    ${INTELRUNTIME_LIBRARIES}
-    ${ZLIB_LIBRARY}
-    ${BLAS_LIBRARIES}
-    ${LAPACK_LIBRARIES}
-    ${METIS_SVFSI_LIBRARY_NAME}
-    ${PARMETIS_SVFSI_LIBRARY_NAME}
-    ${TETGEN_LIBRARY_NAME}
-    ${TINYXML_LIBRARY_NAME}
-    ${SV_LIB_SVFSILS_NAME}${SV_MPI_NAME_EXT}
-    ${VTK_LIBRARIES}
-  )
-
-  # link Google Test
-  target_link_libraries(
-    run_all_unit_tests
-    gtest
-    GTest::gtest_main 
-    pthread   # link pthread on ubuntu20
-  )
-
-  # gtest_discover_tests(runUnitTest)
-  add_test(NAME all_unit_tests COMMAND run_all_unit_tests)
-
-endif()
 

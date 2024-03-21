@@ -1,32 +1,3 @@
-/* Copyright (c) Stanford University, The Regents of the University of California, and others.
- *
- * All Rights Reserved.
- *
- * See Copyright-SimVascular.txt for additional details.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included
- * in all copies or substantial portions of the Software.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
- * IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
- * PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
- * OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
- * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
- * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
 
 // The functions defined here replicate the Fortran functions defined in READFILES.f.
 
@@ -58,9 +29,12 @@ namespace read_files_ns {
 //#include "set_output_props.h"
 #include "set_viscosity_props.h"
 
-/// @brief Match two faces?
-///
-/// \todo [TODO:DaveP] this has not been tested.
+//------------
+// face_match
+//------------
+// Match two faces?
+//
+// [TODO:DaveP] this has not been tested.
 //
 void face_match(ComMod& com_mod, faceType& lFa, faceType& gFa, Vector<int>& ptr)
 {
@@ -340,7 +314,10 @@ void read_bc(Simulation* simulation, EquationParameters* eq_params, eqType& lEq,
     // [NOTE] This is not implemented.
     if (bc_params->bct_file_path.defined()) {
       auto file_name = bc_params->bct_file_path.value();
+      throw std::runtime_error("[read_bc] read_bct is not imlemented.");
       read_bct(com_mod, lBc.gm, com_mod.msh[iM].fa[iFa], file_name);
+      //ALLOCATE(lBc%gm)
+      //CALL READBCT(lBc%gm, msh(iM)%fa(iFa), ftmp%fname)
 
     } else {
       if (bc_params->temporal_and_spatial_values_file_path.defined()) {
@@ -356,7 +333,7 @@ void read_bc(Simulation* simulation, EquationParameters* eq_params, eqType& lEq,
   }
 
   // Stiffness and damping parameters for Robin BC
-  if (utils::btest(lBc.bType, enum_int(BoundaryConditionType::bType_Robin))) { 
+  if (!utils::btest(lBc.bType, enum_int(BoundaryConditionType::bType_Robin))) { 
     lBc.k = bc_params->stiffness.value();
     lBc.c = bc_params->damping.value();
     lBc.rbnN = bc_params->apply_along_normal_direction.value();
@@ -594,7 +571,9 @@ void read_bc(Simulation* simulation, EquationParameters* eq_params, eqType& lEq,
       int iM = lBc.iM;
       int iFa = lBc.iFa;
       auto& face = com_mod.msh[iM].fa[iFa];
-      face.x.resize(com_mod.nsd, face.nNo);
+      if (face.x.size() == 0) {
+        face.x.resize(com_mod.nsd, face.nNo);
+      }
 
       int data_series = 0;
       vtk_xml::read_vtp_pdata(cTmp, "Displacement", com_mod.nsd, com_mod.nsd, data_series, face);
@@ -633,158 +612,33 @@ void read_bc(Simulation* simulation, EquationParameters* eq_params, eqType& lEq,
 //
 // Reproduces 'SUBROUTINE READBCT(lMB, lFa, fName)' in READFILES.f.
 //
+// [TODO:DaveP] this is not implemented.
+//
 void read_bct(ComMod& com_mod, MBType& lMB, faceType& lFa, const std::string& fName)
 {
-  // The name of the arrays to search for in the bct.vtp file.
-  static std::string shdr("velocity_");
-
-  static std::string file_desc("general velocity data file '" + fName + "'"); 
-
   if (FILE *file = fopen(fName.c_str(), "r")) {
       fclose(file);
   } else {
-    throw std::runtime_error("The " + file_desc + " can't be read.");
+    throw std::runtime_error("The VTK VTP bct data file '" + fName + "' can't be read.");
   }
 
   // Read the vtp file.
   //
   VtkVtpData vtp_data(fName);
-  int nNo = vtp_data.num_points();
-  if (nNo == 0) {
-    throw std::runtime_error("The " + file_desc + " does not contain any points.");
+  int num_points = vtp_data.num_points();
+  if (num_points == 0) {
+    throw std::runtime_error("The VTK VTP bct data file '" + fName + "' does not contain any points.");
   }
 
   int num_elems = vtp_data.num_elems();
   if (num_elems == 0) {
-    throw std::runtime_error("The " + file_desc + " does not contain any elements.");
+    throw std::runtime_error("The VTK VTP bct data file '" + fName + "' does not contain any elements.");
   }
 
-  if (nNo != lFa.nNo) {
-    throw std::runtime_error("The number of points (" + std::to_string(nNo) + ") in the " + file_desc + 
-        " does not match the number of points (" + std::to_string(nNo) + " for the face '" + lFa.name + "'.");
+  if (num_points != lFa.nNo) {
+    throw std::runtime_error("The number of points (" + std::to_string(num_points) + " in the VTK VTP bct data file '" + fName + 
+        "' does not match the number of points (" + std::to_string(num_points) + " for the face '" + lFa.name + "'.");
   }
-
-  // Get all the point data starting with "velocity_"
-  //
-  auto namesL = vtp_data.get_point_data_names();
-  int n = namesL.size();
-
-  int ntime = 0;
-  int nj = 1;
-
-  for (int i = 0; i < n; i++) {
-    auto stmp = namesL[i];
-
-    for (int j = 0; j < 9; j++) {
-      if (shdr[j] != stmp[j]) {
-        break; 
-      }
-      nj += 1;
-    }
-
-    if (nj < 9) {
-      namesL[i] = "";
-      continue; 
-    }
-    ntime = ntime + 1;
-  } 
-
-  // Initialize lMB data structure
-  //
-  const int nsd = com_mod.nsd;
-  lMB.dof = nsd;
-  lMB.nTP = ntime;
-  int iM = lFa.iM;
-  lMB.t.resize(ntime); 
-  lMB.d.resize(nsd,nNo,ntime); 
-  Vector<int> ptr(com_mod.msh[iM].gnNo);
-
-  ntime = 0;
-
-  for (int i = 0; i < n; i++) {
-    auto stmp = namesL[i];
-    if (stmp.size() == 0) { 
-      continue;
-    }
-
-    stmp = stmp.substr(9);
-    double t = std::stod(stmp);
-    lMB.t(ntime) = t;
-
-    if (ntime == 0) { 
-      if (!utils::is_zero(t)) {
-        throw std::runtime_error("The first time step in the " + file_desc + " should be zero.");
-      }
-    } else {
-      t = t - lMB.t(ntime-1);
-      if (utils::is_zero(t) || t < 0.0) {
-        throw std::runtime_error("There is a non-increaing series of times in the " + file_desc + ".");
-      }
-    }
-
-    ntime = ntime + 1;
-  }
-
-  lMB.period = lMB.t(ntime-1);
-  auto& msh = com_mod.msh[iM];
-
-  // Prepare pointer array
-  //
-  for (int a = 0; a < lFa.nNo; a++) {
-    int Ac = lFa.gN(a);
-    Ac = msh.lN(Ac);
-
-    if (Ac == -1) {
-      throw std::runtime_error("Incorrect global node number detected in the " + file_desc + 
-          ".  Mesh: '"  + msh.name + "'  Face: '" + lFa.name + "'  Node: " + std::to_string(a+1) + 
-          " gN: " + std::to_string(lFa.gN(a)));
-    }
-
-    ptr(Ac) = a;
-  } 
-
-  // Get GlobalNodeID from vtp file and make sure it is consistent
-  // with mesh structure
-  //
-  Vector<int> gN(nNo);
-  vtp_data.copy_point_data("GlobalNodeID", gN);
-
-  for (int a = 0; a < nNo; a++) {
-    int Ac = gN(a) - 1;
-    if (Ac > msh.gnNo-1 || Ac < 0) {
-      throw std::runtime_error("Global node IDs in the '" + file_desc + " are not consistent with the volume mesh '" + msh.name + ".");
-    }
-    Ac = ptr(Ac);
-    if (Ac == -1) { 
-      throw std::runtime_error("Global node IDs in the '" + file_desc + " are not consistent with the volume mesh '" + msh.name + ".");
-    }
-  }
-
-  // Load spatial data for each time point from vtp file
-  //
-  Array<double> tmpR(nsd,nNo);
-  ntime = 0;
-
-  for (int i = 0; i < n; i++) {
-    auto stmp = namesL[i];
-    if (stmp.size() == 0) { 
-      continue;
-    }
-
-    tmpR = 0.0;
-    vtp_data.copy_point_data(stmp, tmpR);
-
-    for (int a = 0; a < nNo; a++) {
-      int Ac = gN(a) - 1;
-      Ac = ptr(Ac);
-      for (int j = 0; j < nsd; j++) {
-        lMB.d(j,Ac,ntime) = tmpR(j,a);
-      }
-    }
-
-    ntime = ntime + 1;
-  }
-
 }
 
 //---------
@@ -986,10 +840,6 @@ void read_cep_domain(Simulation* simulation, EquationParameters* eq_params, Doma
   if (domain_params->G_to.defined())  { cep_mod.ttp.G_to[lDmn.cep.imyo - 1] = domain_params->G_to.value(); }
   if (domain_params->G_CaL.defined()) { cep_mod.ttp.G_CaL = domain_params->G_CaL.value(); }
 
-  // Set Bo parameters.
-  //
-  if (domain_params->tau_si.defined())  { cep_mod.bo.tau_si[lDmn.cep.imyo - 1] = domain_params->tau_si.value(); }
-  if (domain_params->tau_fi.defined())  { cep_mod.bo.tau_fi[lDmn.cep.imyo - 1] = domain_params->tau_fi.value(); }
 
   // Set stimulus parameters. 
   //
@@ -1366,11 +1216,14 @@ void read_eq(Simulation* simulation, EquationParameters* eq_params, eqType& lEq)
     if (eq_params->couple_to_genBC.defined()) {
       cplBC.useGenBC = true;
       cplbc_type_str = eq_params->couple_to_genBC.type.value();
+    } else if (eq_params->couple_to_svZeroD.defined()) {
+      cplBC.useSvZeroD = true;
+      cplbc_type_str = eq_params->couple_to_svZeroD.type.value();
     } else if (eq_params->couple_to_cplBC.defined()) {
       cplbc_type_str = eq_params->couple_to_cplBC.type.value();
     }
 
-    if (eq_params->couple_to_genBC.defined() || eq_params->couple_to_cplBC.defined()) {
+    if (eq_params->couple_to_genBC.defined() || eq_params->couple_to_cplBC.defined() || eq_params->couple_to_svZeroD.defined()) {
       try {
         cplBC.schm = consts::cplbc_name_to_type.at(cplbc_type_str);
       } catch (const std::out_of_range& exception) {
@@ -1378,12 +1231,18 @@ void read_eq(Simulation* simulation, EquationParameters* eq_params, eqType& lEq)
       }
     }
 
-
     if (cplBC.schm != consts::CplBCType::cplBC_NA) { 
       if (cplBC.useGenBC) {
-        cplBC.binPath = eq_params->couple_to_genBC.zerod_code_file_path.value();
+        if (cplBC.binPath.size() == 0){
+            cplBC.binPath = eq_params->couple_to_genBC.zerod_code_file_path.value();
+         }
         cplBC.commuName = "GenBC.int";
         cplBC.nX = 0;
+        cplBC.xp.resize(cplBC.nX);
+      } else if (cplBC.useSvZeroD) {
+        cplBC.commuName = "svZeroD_interface.dat";
+        cplBC.nX = 0;
+        cplBC.xo = 0;
       } else {
         auto& cplBC_params = eq_params->couple_to_cplBC;
         cplBC.nX = cplBC_params.number_of_unknowns.value();
@@ -2865,19 +2724,12 @@ void read_visc_model(Simulation* simulation, EquationParameters* eq_params, Doma
 // Read CMM variable wall properties from a file.
 //
 // Modifies:
-//   com_mod.msh[iM.x - seems to use this as a scratch array.
+//   com_mod.msh[iM.x - seems to use this as a scatch array.
+//
+// [NOTE] This is not fully implemented, no tests yet.
 //
 void read_wall_props_ff(ComMod& com_mod, const std::string& file_name, const int iM, const int iFa)
 {
-  #define n_debug_read_wall_props_ff
-  #ifdef debug_read_wall_props_ff
-  DebugMsg dmsg(__func__, com_mod.cm.idcm());
-  dmsg.banner();
-  dmsg << "com_mod.cmmInit: " << com_mod.cmmInit;
-  dmsg << "com_mod.varWallProps.nrows(): " << com_mod.varWallProps.nrows();
-  dmsg << "com_mod.varWallProps.ncols(): " << com_mod.varWallProps.ncols();
-  #endif
-
   if (com_mod.cmmInit) {
     auto& mesh = com_mod.msh[iM];
     mesh.x.resize(1, mesh.gnNo);
@@ -2886,7 +2738,6 @@ void read_wall_props_ff(ComMod& com_mod, const std::string& file_name, const int
     int data_comp = 1;
     int data_series = 1;
     vtk_xml::read_vtu_pdata(file_name, "Thickness", com_mod.nsd, data_comp, data_series, mesh);
-
     for (int a = 0; a < mesh.gnNo; a++) {
       int Ac = mesh.gN[a];
       com_mod.varWallProps(0,Ac) = mesh.x(0,a);
@@ -2894,19 +2745,9 @@ void read_wall_props_ff(ComMod& com_mod, const std::string& file_name, const int
 
     // Read elasticity modulus
     mesh.x = 0.0; 
-    data_comp = 1;
-    data_series = 1;
-    #ifdef debug_read_wall_props_ff
-    dmsg << "read_vtp_pdata Elasticity_modulus ..." << com_mod.cmmInit;
-    #endif
-    vtk_xml::read_vtu_pdata(file_name, "Elasticity_modulus", com_mod.nsd, data_comp, data_series, mesh);
-
-    #ifdef debug_read_wall_props_ff
-    dmsg << "Set com_mod.varWallProps ... " << com_mod.cmmInit;
-    #endif
     for (int a = 0; a < mesh.gnNo; a++) {
       int Ac = mesh.gN[a];
-      com_mod.varWallProps(1,Ac) = mesh.x(0,a);
+      com_mod.varWallProps(1,Ac) = mesh.x(1,a);
     }
 
   } else { 
@@ -2917,34 +2758,12 @@ void read_wall_props_ff(ComMod& com_mod, const std::string& file_name, const int
     // Read thickness
     int data_comp = 1;
     int data_series = 0;
-    #ifdef debug_read_wall_props_ff
-    dmsg << "read_vtp_pdata Thickness " << " ...";
-    #endif
     vtk_xml::read_vtp_pdata(file_name, "Thickness", com_mod.nsd, data_comp, data_series, face);
 
-    #ifdef debug_read_wall_props_ff
-    dmsg << "Set com_mod.varWallProps(0,Ac) " << " ...";
-    #endif
-
     for (int a = 0; a < face.nNo; a++) {
       int Ac = face.gN[a];
       Ac = mesh.gN[Ac];
-      com_mod.varWallProps(0,Ac) = face.x(0,a);
-    }
-
-    #ifdef debug_read_wall_props_ff
-    dmsg << "read_vtp_pdata Elasticity_modulus " << "...";
-    #endif
-    vtk_xml::read_vtp_pdata(file_name, "Elasticity_modulus", com_mod.nsd, data_comp, data_series, face);
-
-    #ifdef debug_read_wall_props_ff
-    dmsg << "Set com_mod.varWallProps(1,Ac) " << " ...";
-    #endif
-
-    for (int a = 0; a < face.nNo; a++) {
-      int Ac = face.gN[a];
-      Ac = mesh.gN[Ac];
-      com_mod.varWallProps(1,Ac) = face.x(0,a);
+      com_mod.varWallProps(0,Ac) = face.x(1,a);
     }
   }
 }

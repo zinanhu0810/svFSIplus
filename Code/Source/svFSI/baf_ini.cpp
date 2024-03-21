@@ -1,32 +1,3 @@
-/* Copyright (c) Stanford University, The Regents of the University of California, and others.
- *
- * All Rights Reserved.
- *
- * See Copyright-SimVascular.txt for additional details.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included
- * in all copies or substantial portions of the Software.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
- * IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
- * PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
- * OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
- * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
- * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
 
 // The functions defined here replicate the Fortran functions defined in BAFINI.f.
 
@@ -38,6 +9,7 @@
 #include "nn.h"
 #include "set_bc.h"
 #include "utils.h"
+#include "svZeroD_subroutines.h"
 
 #include "fsils_api.hpp"
 #include "fils_struct.hpp"
@@ -48,22 +20,23 @@
 
 namespace baf_ini_ns {
 
-/// @brief This routine initializes required structure for boundaries,
-/// faces, those that interface with FSILS and cplBC.
-///
-/// Modifies:
-/// \code {.cpp}
-///  com_mod.cplBC.fa
-///  com_mod.cplBC.xn
-///
-///  com_mod.cplBC.fa[i].RCR.Rp = bc.RCR.Rp;
-///  com_mod.cplBC.fa[i].RCR.C  = bc.RCR.C;
-///  com_mod.cplBC.fa[i].RCR.Rd = bc.RCR.Rd;
-///  com_mod.cplBC.fa[i].RCR.Pd = bc.RCR.Pd;
-///  com_mod.cplBC.fa[i].RCR.Xo = bc.RCR.Xo;
-/// \endcode
-///
-/// Replicates 'SUBROUTINE BAFINI()' defined in BAFINIT.f
+//---------
+// baf_ini
+//---------
+// This routine initializes required structure for boundaries,
+// faces, those that interface with FSILS and cplBC.
+//
+// Modifies:
+//  com_mod.cplBC.fa
+//  com_mod.cplBC.xn
+//
+//  com_mod.cplBC.fa[i].RCR.Rp = bc.RCR.Rp;
+//  com_mod.cplBC.fa[i].RCR.C  = bc.RCR.C;
+//  com_mod.cplBC.fa[i].RCR.Rd = bc.RCR.Rd;
+//  com_mod.cplBC.fa[i].RCR.Pd = bc.RCR.Pd;
+//  com_mod.cplBC.fa[i].RCR.Xo = bc.RCR.Xo;
+//
+// Replicates 'SUBROUTINE BAFINI()' defined in BAFINIT.f
 //
 void baf_ini(Simulation* simulation)
 {
@@ -121,8 +94,7 @@ void baf_ini(Simulation* simulation)
   int iEq = 0;
   com_mod.cplBC.fa.resize(com_mod.cplBC.nFa); 
   com_mod.cplBC.xn.resize(com_mod.cplBC.nX);
-  
-  // Assign cplBC internal variables
+
   if (com_mod.cplBC.coupled) {
     auto& eq = com_mod.eq[iEq];
     for (int iBc = 0; iBc < eq.nBc; iBc++) {
@@ -140,8 +112,6 @@ void baf_ini(Simulation* simulation)
 
         } else if (utils::btest(bc.bType, iBC_Neu)) {
           com_mod.cplBC.fa[i].bGrp = CplBCType::cplBC_Neu;
-          // For implicit or semi-implicit (not explicit) Neumann 0D coupling scheme, 
-          // set bType to resistance
           if (com_mod.cplBC.schm != CplBCType::cplBC_E) {
             bc.bType= utils::ibset(bc.bType, iBC_res);
           }
@@ -164,6 +134,10 @@ void baf_ini(Simulation* simulation)
 
     if (com_mod.cplBC.useGenBC) {
       set_bc::genBC_Integ_X(com_mod, cm_mod, "I");
+    }
+
+    if (com_mod.cplBC.useSvZeroD) {
+      svZeroD::init_svZeroD(com_mod, cm_mod);
     }
 
     if (com_mod.cplBC.schm != CplBCType::cplBC_E) {
@@ -307,7 +281,7 @@ void bc_ini(const ComMod& com_mod, const CmMod& cm_mod, bcType& lBc, faceType& l
   } else if (btest(lBc.bType, iBC_para)) { 
     Vector<double> center(3);
     for (int i = 0; i < nsd; i++) {
-      center(i) = all_fun::integ(com_mod, cm_mod, lFa, com_mod.x, i) / lFa.area;
+      center(i) = all_fun::integ(com_mod, cm_mod, lFa, com_mod.x, i+1) / lFa.area;
     }
 
     // gNodes is one if a node located on the boundary (beside iFa)
@@ -486,7 +460,6 @@ void face_ini(Simulation* simulation, mshType& lM, faceType& lFa)
   dmsg << "Flag: " << flag;
   #endif
 
-  // Compute integral of normal vector over surface element
   if (!flag) {
     Vector<double> nV(nsd);
     for (int e = 0; e < lFa.nEl; e++) {
@@ -706,7 +679,6 @@ void fsi_ls_ini(ComMod& com_mod, const CmMod& cm_mod, bcType& lBc, const faceTyp
   Array<double> sV(nsd,tnNo); 
   Vector<int> gNodes(nNo);
 
-  // Copy mesh node id corresponding to face node id to gNodes
   for (int a= 0; a < nNo; a++) {
     gNodes(a) = lFa.gN(a);
   }
@@ -738,7 +710,6 @@ void fsi_ls_ini(ComMod& com_mod, const CmMod& cm_mod, bcType& lBc, const faceTyp
     }
 
   } else if (btest(lBc.bType, iBC_Neu)) {
-    // Compute integral of normal vector over the face (needed for resistance BC/0D-coupling)
     if (btest(lBc.bType, iBC_res)) {
       sV = 0.0;
       for (int e = 0; e < lFa.nEl; e++) {
@@ -768,8 +739,6 @@ void fsi_ls_ini(ComMod& com_mod, const CmMod& cm_mod, bcType& lBc, const faceTyp
 
       lsPtr = lsPtr + 1;
       lBc.lsPtr = lsPtr;
-      
-      // Fills lhs.face(i) variables, including val is sVl exists
       fsils_bc_create(com_mod.lhs, lsPtr, lFa.nNo, nsd, BcType::BC_TYPE_Neu, gNodes, sVl); 
     } else {
       lBc.lsPtr = -1;

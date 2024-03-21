@@ -1,32 +1,3 @@
-/* Copyright (c) Stanford University, The Regents of the University of California, and others.
- *
- * All Rights Reserved.
- *
- * See Copyright-SimVascular.txt for additional details.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included
- * in all copies or substantial portions of the Software.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
- * IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
- * PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
- * OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
- * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
- * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
 
 // The code here replicates the Fortran code in DISTRIBUTE.f.
 
@@ -50,9 +21,12 @@ int split_(int *nElptr, int *eNoNptr, int *eNoNbptr, int *IEN, int *nPartsPtr, i
 
 };
  
-/// @brief Partition and distribute data across processors.
-///
-/// This function replicates the Fortran 'SUBROUTINE DISTRIBUTE' in DISTRIBUTE.f.
+//------------
+// distribute
+//------------
+// Partition and distribute data across processors.
+//
+// This function replicates the Fortran 'SUBROUTINE DISTRIBUTE' in DISTRIBUTE.f.
 //
 void distribute(Simulation* simulation)
 {
@@ -522,8 +496,15 @@ void distribute(Simulation* simulation)
   cm.bcast(cm_mod, &cplBC.nFa);
   cm.bcast_enum(cm_mod, &cplBC.schm);
   cm.bcast(cm_mod, &cplBC.useGenBC);
+  cm.bcast(cm_mod, &cplBC.useSvZeroD);
 
   if (cplBC.useGenBC) {   
+    if (cm.slv(cm_mod)) {   
+      cplBC.nX = 0;
+      cplBC.xo.resize(cplBC.nX);
+    }
+
+  } else if (cplBC.useSvZeroD) {   
     if (cm.slv(cm_mod)) {   
       cplBC.nX = 0;
       cplBC.xo.resize(cplBC.nX);
@@ -542,7 +523,10 @@ void distribute(Simulation* simulation)
   cm.bcast(cm_mod, &cplBC.initRCR);
 }
 
-
+//---------
+// dist_bc
+//---------
+//
 void dist_bc(ComMod& com_mod, const CmMod& cm_mod, const cmType& cm, bcType& lBc, const std::vector<mshType>& tMs,
              const Vector<int>& gmtl)
 {
@@ -926,8 +910,10 @@ void dist_bf(ComMod& com_mod, const CmMod& cm_mod, const cmType& cm, bfType& lBf
   }
 }
 
-
-
+//---------
+// dist_eq
+//---------
+//
 void dist_eq(ComMod& com_mod, const CmMod& cm_mod, const cmType& cm, const std::vector<mshType>& tMs,
              const Vector<int>& gmtl, CepMod& cep_mod, eqType& lEq)
 {
@@ -1042,9 +1028,6 @@ void dist_eq(ComMod& com_mod, const CmMod& cm_mod, const cmType& cm, const std::
       cm.bcast(cm_mod, &cep_mod.ttp.G_Kr);
       cm.bcast(cm_mod, cep_mod.ttp.G_Ks);
       cm.bcast(cm_mod, cep_mod.ttp.G_to);
-
-      cm.bcast(cm_mod, cep_mod.bo.tau_si);
-      cm.bcast(cm_mod, cep_mod.bo.tau_fi);
     } 
 
     if ((dmn.phys == EquationType::phys_struct) || (dmn.phys == EquationType::phys_ustruct)) {
@@ -1146,8 +1129,10 @@ void dist_eq(ComMod& com_mod, const CmMod& cm_mod, const cmType& cm, const std::
   }
 } 
 
-
-/// @brief Distribute material properties to all processors.
+//-----------------
+// dist_mat_consts
+//-----------------
+// Distribute material properties to all processors.
 //
 void dist_mat_consts(const ComMod& com_mod, const CmMod& cm_mod, const cmType& cm, stModelType& lStM)
 {
@@ -1210,7 +1195,10 @@ void dist_mat_consts(const ComMod& com_mod, const CmMod& cm_mod, const cmType& c
 
 }
 
-
+//-----------------
+// dist_visc_model
+//-----------------
+//
 void dist_visc_model(const ComMod& com_mod, const CmMod& cm_mod, const cmType& cm, viscModelType& lVis)
 {
   using namespace consts;
@@ -1223,7 +1211,10 @@ void dist_visc_model(const ComMod& com_mod, const CmMod& cm_mod, const cmType& c
   cm.bcast(cm_mod, &lVis.n);
 }
 
-
+//-----------
+// part_face
+//-----------
+//
 void part_face(Simulation* simulation, mshType& lM, faceType& lFa, faceType& gFa, Vector<int>& gmtl)
 {
   #ifdef debug_part_face
@@ -1421,8 +1412,10 @@ void part_face(Simulation* simulation, mshType& lM, faceType& lFa, faceType& gFa
   }
 }
 
-
-/// @brief Reproduces the Fortran 'PARTMSH' subroutine.
+//----------
+// part_msh
+//----------
+// Reproduces the Fortran 'PARTMSH' subroutine.
 //
 void part_msh(Simulation* simulation, int iM, mshType& lM, Vector<int>& gmtl, int nP, Vector<float>& wgt)
 {
@@ -1582,7 +1575,7 @@ void part_msh(Simulation* simulation, int iM, mshType& lM, Vector<int>& gmtl, in
 
   Vector<int> part(nEl);
 
-  std::string fTmp = chnl_mod.appPath + "partitioning_" + lM.name + ".bin";
+  std::string fTmp = chnl_mod.appPath + "partitioning_" + lM.name + "_cpp.bin";
   bool flag = false;
   FILE *fp = nullptr; 
   if (com_mod.rmsh.isReqd) { 

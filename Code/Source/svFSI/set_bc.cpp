@@ -1,32 +1,3 @@
-/* Copyright (c) Stanford University, The Regents of the University of California, and others.
- *
- * All Rights Reserved.
- *
- * See Copyright-SimVascular.txt for additional details.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included
- * in all copies or substantial portions of the Software.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
- * IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
- * PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
- * OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
- * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
- * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
 
 #include "set_bc.h"
 
@@ -43,6 +14,7 @@
 #include "ustruct.h"
 #include "utils.h"
 #include <math.h>
+#include "svZeroD_subroutines.h"
 
 #ifdef WITH_TRILINOS
 #include "trilinos_linear_solver.h"
@@ -50,12 +22,10 @@
 
 namespace set_bc {
 
-/// @brief This function calculates updated cplBC pressures or flowrates from 0D,
-/// as well as the resistance matrix M ~ dP/dQ from 0D using finite difference.
-/// Updates the pressure or flowrates stored in cplBC.fa[i].y and the resistance
-/// matrix M ~ dP/dQ stored in eq.bc[iBc].r.
-/// @param com_mod 
-/// @param cm_mod 
+//-----------------
+// calc_der_cpl_bc
+//-----------------
+//
 void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
 {
   using namespace consts;
@@ -67,15 +37,15 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
   #endif
 
   const int iEq = 0;
-  const double absTol = 1.0e-8;
+  // NOTE: For coupling with svZeroDPlus, absTol needs to be > 1e-8 to be compatible with the default convergence tolerance of svZeroDPlus (1e-8)
+  // If this is not true, the finite difference computation of bc.r below results in zero because the perturbation is below the svZeroDPlus tolerance 
+  const double absTol = 1.0e-7;
   const double relTol = 1.0e-5;
 
   int nsd = com_mod.nsd;
   auto& eq = com_mod.eq[iEq];
   auto& cplBC = com_mod.cplBC;
 
-  // If coupling is all with Dirichlet faces, no derivative calculation is needed
-  // (see Moghadam et al. 2013 Section 2.2.2)
   if (std::count_if(cplBC.fa.begin(),cplBC.fa.end(),[](cplFaceType& fa){return fa.bGrp == CplBCType::cplBC_Dir;}) == cplBC.fa.size()) { 
     #ifdef debug_calc_der_cpl_bc 
     dmsg << "all cplBC_Dir " << std::endl;
@@ -84,17 +54,8 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
   }
   // if (ALL(cplBC.fa.bGrp .EQ. cplBC_Dir)) RETURN
 
-  // Determine current physics
-  auto& cDmn = com_mod.cDmn;
-  auto cPhys = eq.dmn[cDmn].phys;
-
-  // Mechanical configuration in which to compute flowrate
-  auto cfg_o = MechanicalConfigurationType::reference;
-  auto cfg_n = MechanicalConfigurationType::reference;
-
   bool RCRflag = false;
 
-  // Loop over BCs
   for (int iBc = 0; iBc < eq.nBc; iBc++) {
     #ifdef debug_calc_der_cpl_bc 
     dmsg << "----- iBc " << iBc+1 << " -----" << std::endl;
@@ -117,29 +78,10 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
 
     if (ptr != -1) {
       auto& fa = com_mod.msh[iM].fa[iFa];
-      // Compute flowrates at 3D Neumann boundaries at timesteps n and n+1
-      if (utils::btest(bc.bType, iBC_Neu)) {
-        // If struct or ustruct, use old and new configurations to compute flowrate integral
-        if ((cPhys == EquationType::phys_struct) || (cPhys == EquationType::phys_ustruct)) {
 
-          // Must use follower pressure load for 0D coupling with struct/ustruct
-          if (!bc.flwP) { 
-            throw std::runtime_error("[calc_der_cpl_bc]  Follower pressure load must be used for 0D coupling with struct/ustruct");
-          }
-          cfg_o = MechanicalConfigurationType::old_timestep;
-          cfg_n = MechanicalConfigurationType::new_timestep;
-        }
-        // If fluid, FSI, or CMM, use reference configuration to compute flowrate integral
-        // Note that for FSI, mvMsh will modify geometry in gnnb()
-        else if ((cPhys == EquationType::phys_fluid) || (cPhys == EquationType::phys_FSI) || (cPhys == EquationType::phys_CMM)) {
-          cfg_o = MechanicalConfigurationType::reference;
-          cfg_n = MechanicalConfigurationType::reference;
-        }
-        else {
-          throw std::runtime_error("[calc_der_cpl_bc]  Invalid physics type for 0D coupling");
-        }
-        cplBC.fa[ptr].Qo = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yo, 0, nsd-1, false, cfg_o);
-        cplBC.fa[ptr].Qn = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yn, 0, nsd-1, false, cfg_n);
+      if (utils::btest(bc.bType, iBC_Neu)) {
+        cplBC.fa[ptr].Qo = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yo, 1, nsd);
+        cplBC.fa[ptr].Qn = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yn, 1, nsd);
         cplBC.fa[ptr].Po = 0.0;
         cplBC.fa[ptr].Pn = 0.0;
         #ifdef debug_calc_der_cpl_bc 
@@ -148,12 +90,10 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
         dmsg << "cplBC.fa[ptr].Qn: " << cplBC.fa[ptr].Qn;
         #endif
 
-      }
-      // Compute avg pressures at 3D Dirichlet boundaries at timesteps n and n+1 
-      else if (utils::btest(bc.bType, iBC_Dir)) {
+      } else if (utils::btest(bc.bType, iBC_Dir)) {
         double area = fa.area;
-        cplBC.fa[ptr].Po = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yo, nsd) / area;
-        cplBC.fa[ptr].Pn = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yn, nsd) / area;
+        cplBC.fa[ptr].Po = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yo, nsd+1) / area;
+        cplBC.fa[ptr].Pn = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yn, nsd+1) / area;
         cplBC.fa[ptr].Qo = 0.0;
         cplBC.fa[ptr].Qn = 0.0;
         #ifdef debug_calc_der_cpl_bc 
@@ -169,15 +109,14 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
   dmsg << "RCRflag: " << RCRflag;
   #endif
 
-  // Call genBC or cplBC to get updated pressures or flowrates.
   if (cplBC.useGenBC) {
      set_bc::genBC_Integ_X(com_mod, cm_mod, "D");
+   } else if (cplBC.useSvZeroD) {
+     svZeroD::calc_svZeroD(com_mod, cm_mod, 'D');
    } else {
      set_bc::cplBC_Integ_X(com_mod, cm_mod, RCRflag);
   }
 
-  // Compute the epsilon parameter (diff) for the finite difference calculation
-  // of the resistance matrix M ~ dP/dQ. Slightly different from Eq. 30 in Moghadam et al. 2013
   int j = 0;
   double diff = 0.0;
 
@@ -185,7 +124,7 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
     auto& bc = eq.bc[iBc];
     int i = bc.cplBCptr;
     if (i != -1 && utils::btest(bc.bType, iBC_Neu)) {
-      diff = diff + (cplBC.fa[i].Qn * cplBC.fa[i].Qn);
+      diff = diff + (cplBC.fa[i].Qo * cplBC.fa[i].Qo);
       j = j + 1;
     }
   }
@@ -197,44 +136,34 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
      diff = diff*relTol;
   }
 
-  // Store the original pressures and flowrates
-  std::vector<double> orgY(cplBC.fa.size());
-  std::vector<double> orgQ(cplBC.fa.size());
-
-  for (size_t i = 0; i < cplBC.fa.size(); i++) {
-    orgY[i] = cplBC.fa[i].y;
-    orgQ[i] = cplBC.fa[i].Qn;
-  }
-
   for (int iBc = 0; iBc < eq.nBc; iBc++) {
     auto& bc = eq.bc[iBc];
     int i = bc.cplBCptr;
 
     if (i != -1 && utils::btest(bc.bType, iBC_Neu)) {
-
-        // Finite difference perturbation in flowrate
-        cplBC.fa[i].Qn = orgQ[i] + diff;
-
-        // Call genBC or cplBC again with perturbed flowrate
+        double orgY = cplBC.fa[i].y;
+        double orgQ = cplBC.fa[i].Qn;
+        cplBC.fa[i].Qn = cplBC.fa[i].Qn + diff;
+  
         if (cplBC.useGenBC) {
-           set_bc::genBC_Integ_X(com_mod, cm_mod, "D");
-         } else {
-           set_bc::cplBC_Integ_X(com_mod, cm_mod, RCRflag);
+          set_bc::genBC_Integ_X(com_mod, cm_mod, "D");
+        } else if (cplBC.useSvZeroD) {
+          svZeroD::calc_svZeroD(com_mod, cm_mod, 'D');
+        } else {
+          set_bc::cplBC_Integ_X(com_mod, cm_mod, RCRflag);
         }
 
-        // Finite difference calculation of the resistance dP/dQ
-        bc.r = (cplBC.fa[i].y - orgY[i]) / diff;
-
-        // Restore the original pressures and flowrates
-        for (size_t j = 0; j < cplBC.fa.size(); j++) {
-          cplBC.fa[j].y = orgY[j];
-          cplBC.fa[j].Qn = orgQ[j];
-}
+        bc.r = (cplBC.fa[i].y - orgY) / diff;
+        cplBC.fa[i].y  = orgY;
+        cplBC.fa[i].Qn = orgQ;
      }
   }
 }
 
-/// @brief Interface to call 0D code (cplBC)
+//---------------
+// cplBC_Integ_X
+//---------------
+// Interface to call 0D code (cplBC)
 // 
 void cplBC_Integ_X(ComMod& com_mod, const CmMod& cm_mod, const bool RCRflag)
 {
@@ -348,8 +277,7 @@ void genBC_Integ_X(ComMod& com_mod, const CmMod& cm_mod, const std::string& genF
       } else if (fa.bGrp == CplBCType::cplBC_Neu) {
         nNeu = nNeu + 1;
       }
-    }
-
+    }  
     // Write coupling info (number of Dirichlet and Neumann surfaces, pressure, 
     // flow rate) from 3D to cplBC communication file (for GenBC, usually 
     // called GenBC.int)
@@ -454,6 +382,11 @@ void genBC_Integ_X(ComMod& com_mod, const CmMod& cm_mod, const std::string& genF
 
 }
 
+
+//-------------
+// RCR_Integ_X
+//-------------
+// 
 void RCR_Integ_X(ComMod& com_mod, const CmMod& cm_mod, int istat)
 {
   using namespace consts;
@@ -543,11 +476,14 @@ void RCR_Integ_X(ComMod& com_mod, const CmMod& cm_mod, int istat)
 
 }
 
-/// @brief Initialize RCR variables (Xo) from flow field or using user-
-/// provided input. This subroutine is called only when the simulation
-/// is not restarted.
-///
-/// Replaces 'SUBROUTINE RCRINIT()'
+//----------
+// rcr_init
+//----------
+// Initialize RCR variables (Xo) from flow field or using user-
+// provided input. This subroutine is called only when the simulation
+// is not restarted.
+//
+// Replaces 'SUBROUTINE RCRINIT()'
 //
 void rcr_init(ComMod& com_mod, const CmMod& cm_mod)
 {
@@ -572,8 +508,8 @@ void rcr_init(ComMod& com_mod, const CmMod& cm_mod)
       if (cplBC.initRCR) {
         auto& fa = com_mod.msh[iM].fa[iFa];
         double area = fa.area;
-        double Qo = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yo, 0, nsd-1);
-        double Po = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yo, nsd)  / area;
+        double Qo = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yo, 1, nsd);
+        double Po = all_fun::integ(com_mod, cm_mod, fa, com_mod.Yo, nsd+1)  / area;
         cplBC.xo[ptr] = Po - (Qo * cplBC.fa[ptr].RCR.Rp);
       } else { 
         cplBC.xo[ptr] = cplBC.fa[ptr].RCR.Xo;
@@ -582,7 +518,10 @@ void rcr_init(ComMod& com_mod, const CmMod& cm_mod)
   }
 }
 
-/// @brief Below defines the SET_BC methods for the Coupled Momentum Method (CMM)
+//------------
+// set_bc_cmm
+//------------
+// Below defines the SET_BC methods for the Coupled Momentum Method (CMM)
 //
 void set_bc_cmm(ComMod& com_mod, const CmMod& cm_mod, const Array<double>& Ag, const Array<double>& Dg ) 
 {
@@ -609,6 +548,10 @@ void set_bc_cmm(ComMod& com_mod, const CmMod& cm_mod, const Array<double>& Ag, c
   }
 }
 
+//--------------
+// set_bc_cmm_l
+//--------------
+//
 void set_bc_cmm_l(ComMod& com_mod, const CmMod& cm_mod, const faceType& lFa, const Array<double>& Ag, const Array<double>& Dg ) 
 {
   using namespace consts;
@@ -666,8 +609,11 @@ void set_bc_cmm_l(ComMod& com_mod, const CmMod& cm_mod, const faceType& lFa, con
 
 }
 
-/// @brief Coupled BC quantities are computed here.
-/// Reproduces the Fortran 'SETBCCPL()' subrotutine.
+//------------
+// set_bc_cpl 
+//------------
+//
+// Reproduces the Fortran 'SETBCCPL()' subrotutine.
 //
 void set_bc_cpl(ComMod& com_mod, CmMod& cm_mod)
 {
@@ -682,21 +628,9 @@ void set_bc_cpl(ComMod& com_mod, CmMod& cm_mod)
   const int iEq = 0;
   auto& eq = com_mod.eq[iEq];
 
-  // Determine current physics
-  auto& cDmn = com_mod.cDmn;
-  auto cPhys = eq.dmn[cDmn].phys;
-
-  // Configuration in which to compute flowrate
-  auto cfg_o = MechanicalConfigurationType::reference;
-  auto cfg_n = MechanicalConfigurationType::reference;
-
-  // If coupling scheme is implicit, calculate updated pressure and flowrate 
-  // from 0D, as well as resistance from 0D using finite difference.
   if (cplBC.schm == CplBCType::cplBC_I) { 
     calc_der_cpl_bc(com_mod, cm_mod);
 
-  // If coupling scheme is semi-implicit or explicit, only calculated updated
-  // pressure and flowrate from 0D
   } else {
     bool RCRflag = false; 
 
@@ -712,50 +646,26 @@ void set_bc_cpl(ComMod& com_mod, CmMod& cm_mod)
         }
       }
 
-
       if (ptr != -1) {
-        // Compute flowrates at 3D Neumann boundaries at timesteps n and n+1
         if (utils::btest(bc.bType,iBC_Neu)) {
-          // If struct or ustruct, use old and new configurations to compute flowrate integral
-          if ((cPhys == EquationType::phys_struct) || (cPhys == EquationType::phys_ustruct)) {
-
-            // Must use follower pressure load for 0D coupling with struct/ustruct
-            if (!bc.flwP) { 
-              throw std::runtime_error("[set_bc_cpl]  Follower pressure load must be used for 0D coupling with struct/ustruct");
-            }
-            cfg_o = MechanicalConfigurationType::old_timestep;
-            cfg_n = MechanicalConfigurationType::new_timestep;
-          }
-          // If fluid, FSI, or CMM, use reference configuration to compute flowrate integral
-          // Note that for FSI, mvMsh will modify geometry in gnnb()
-          else if ((cPhys == EquationType::phys_fluid) || (cPhys == EquationType::phys_FSI) || (cPhys == EquationType::phys_CMM)) {
-            cfg_o = MechanicalConfigurationType::reference;
-            cfg_n = MechanicalConfigurationType::reference;
-          }
-          else {
-            throw std::runtime_error("[set_bc_cpl]  Invalid physics type for 0D coupling");
-          }
-        
-          cplBC.fa[ptr].Qo = all_fun::integ(com_mod, cm_mod, com_mod.msh[iM].fa[iFa], Yo, 0, nsd-1, false, cfg_o);
-          cplBC.fa[ptr].Qn = all_fun::integ(com_mod, cm_mod, com_mod.msh[iM].fa[iFa], Yn, 0, nsd-1, false, cfg_n);
+          cplBC.fa[ptr].Qo = all_fun::integ(com_mod, cm_mod, com_mod.msh[iM].fa[iFa], Yo, 1, nsd);
+          cplBC.fa[ptr].Qn = all_fun::integ(com_mod, cm_mod, com_mod.msh[iM].fa[iFa], Yn, 1, nsd);
           cplBC.fa[ptr].Po = 0.0;
           cplBC.fa[ptr].Pn = 0.0;
-        } 
-        // Compute avg pressures at 3D Dirichlet boundaries at timesteps n and n+1
-        else if (utils::btest(bc.bType,iBC_Dir)) {
+        } else if (utils::btest(bc.bType,iBC_Dir)) {
           double area = com_mod.msh[iM].fa[iFa].area;
-          cplBC.fa[ptr].Po = all_fun::integ(com_mod, cm_mod, com_mod.msh[iM].fa[iFa], Yo, nsd) / area;
-          cplBC.fa[ptr].Pn = all_fun::integ(com_mod, cm_mod, com_mod.msh[iM].fa[iFa], Yn, nsd) / area;
+          cplBC.fa[ptr].Po = all_fun::integ(com_mod, cm_mod, com_mod.msh[iM].fa[iFa], Yo, nsd+1) / area;
+          cplBC.fa[ptr].Pn = all_fun::integ(com_mod, cm_mod, com_mod.msh[iM].fa[iFa], Yn, nsd+1) / area;
           cplBC.fa[ptr].Qo = 0.0;
           cplBC.fa[ptr].Qn = 0.0;
         }
       }
     }
 
-    // Call genBC or cplBC to get updated pressures or flowrates.
-    // Updates pressure or flowrates stored in cplBC.fa[i].y
     if (cplBC.useGenBC) {
        set_bc::genBC_Integ_X(com_mod, cm_mod, "D");
+    } else if (cplBC.useSvZeroD){
+      svZeroD::calc_svZeroD(com_mod, cm_mod, 'D');
     } else {
        set_bc::cplBC_Integ_X(com_mod, cm_mod, RCRflag);
     }
@@ -769,22 +679,26 @@ void set_bc_cpl(ComMod& com_mod, CmMod& cm_mod)
       bc.g = cplBC.fa[ptr].y;
     }
   }
+
 }
 
-/// @brief Apply Dirichlet BCs strongly.
-///
-/// Parameters
-///   lA - New time derivative of variables (An)
-///   lY - New variables (Yn)
-///   lD - New integrated variables (Dn)
-///
-/// Modfies:
-///   lA(tDof, tnNo)
-///   lY(tDof, tnNo)
-///   lD(tDof, tnNo)
-///   com_mod.Ad - Time derivative of displacement
-///
-/// Reproduces 'SUBROUTINE SETBCDIR(lA, lY, lD)'
+//------------
+// set_bc_dir
+//------------
+// Apply Dirichlet BCs strongly.
+//
+// Parameters
+//   lA - New time derivative of variables (An)
+//   lY - New variables (Yn)
+//   lD - New integrated variables (Dn)
+//
+// Modfies:
+//   lA(tDof, tnNo)
+//   lY(tDof, tnNo)
+//   lD(tDof, tnNo)
+//   com_mod.Ad - Time derivative of displacement
+//
+// Reproduces 'SUBROUTINE SETBCDIR(lA, lY, lD)'
 //
 void set_bc_dir(ComMod& com_mod, Array<double>& lA, Array<double>& lY, Array<double>& lD)
 {
@@ -991,11 +905,15 @@ void set_bc_dir(ComMod& com_mod, Array<double>& lA, Array<double>& lY, Array<dou
 
 }
 
-/// Modifies:
-///   lA(lDof,lFa.nNo)
-///   lY(lDof,lFa.nNo)
-///
-/// Reproduces 'SUBROUTINE SETBCDIRL(lBc, lFa, lA, lY, lDof)'
+//--------------
+// set_bc_dir_l
+//--------------
+//
+// Modifies:
+//   lA(lDof,lFa.nNo)
+//   lY(lDof,lFa.nNo)
+//
+// Reproduces 'SUBROUTINE SETBCDIRL(lBc, lFa, lA, lY, lDof)'
 //
 void set_bc_dir_l(ComMod& com_mod, const bcType& lBc, const faceType& lFa, Array<double>& lA, Array<double>& lY, int lDof)
 {
@@ -1057,7 +975,10 @@ void set_bc_dir_l(ComMod& com_mod, const bcType& lBc, const faceType& lFa, Array
   }
 }
 
-/// @brief Weak treatment of Dirichlet boundary conditions
+//--------------
+// set_bc_dir_w
+//--------------
+// Weak treatment of Dirichlet boundary conditions
 //
 void set_bc_dir_w(ComMod& com_mod, const Array<double>& Yg, const Array<double>& Dg)
 {
@@ -1077,7 +998,10 @@ void set_bc_dir_w(ComMod& com_mod, const Array<double>& Yg, const Array<double>&
   }
 }
 
-/// @brief Reproduces Fortran 'SETBCDIRWL'.
+//---------------
+// set_bc_dir_wl
+//---------------
+// Reproduces Fortran 'SETBCDIRWL'.
 //
 void set_bc_dir_wl(ComMod& com_mod, const bcType& lBc, const mshType& lM, const faceType& lFa, const Array<double>& Yg, const Array<double>& Dg)
 {
@@ -1183,7 +1107,7 @@ void set_bc_dir_wl(ComMod& com_mod, const bcType& lBc, const mshType& lM, const 
   Array3<double> lK(dof*dof,eNoN,eNoN);
   Array<double> xbl(nsd,eNoNb), ubl(nsd,eNoNb);
 
-  // Loop over all the elements of the face and construct residual and
+  // Loop over all the elements of the face and construct residue and
   // tangent matrices
   //
 
@@ -1195,7 +1119,7 @@ void set_bc_dir_wl(ComMod& com_mod, const bcType& lBc, const mshType& lM, const 
       throw std::runtime_error("[set_bc_dir_wl] Weakly applied Dirichlet BC is allowed for fluid phys only");
     }
 
-    // Initialize local residual and stiffness
+    // Initialize local residue and stiffness
     lR = 0.0;
     lK = 0.0;
 
@@ -1312,7 +1236,10 @@ void set_bc_dir_wl(ComMod& com_mod, const bcType& lBc, const mshType& lM, const 
   }
 }
 
-/// @brief Set outlet BCs.
+//------------
+// set_bc_neu
+//------------
+// Set outlet BCs.
 //
 void set_bc_neu(ComMod& com_mod, const CmMod& cm_mod, const Array<double>& Yg, const Array<double>& Dg)
 {
@@ -1335,7 +1262,7 @@ void set_bc_neu(ComMod& com_mod, const CmMod& cm_mod, const Array<double>& Yg, c
     int iFa = bc.iFa;
     int iM = bc.iM;
     #ifdef debug_set_bc_neu
-    dmsg << "----- iBc " << iBc+1;
+    dmsg << "----- iBc " << iBc+1 << " -----";
     #endif
 
     if (utils::btest(bc.bType, iBC_Neu)) {
@@ -1352,7 +1279,10 @@ void set_bc_neu(ComMod& com_mod, const CmMod& cm_mod, const Array<double>& Yg, c
   }
 }
 
-/// @brief Set Neumann BC
+//--------------
+// set_bc_neu_l
+//--------------
+// Set Neumann BC
 //
 void set_bc_neu_l(ComMod& com_mod, const CmMod& cm_mod, const bcType& lBc, const faceType& lFa, const Array<double>& Yg, const Array<double>& Dg) 
 {
@@ -1436,16 +1366,15 @@ void set_bc_neu_l(ComMod& com_mod, const CmMod& cm_mod, const bcType& lBc, const
     for (int a = 0; a < nNo; a++) {
       int Ac = lFa.gN(a);
       hg(Ac) = -h(0)*lBc.gx(a);
-      #ifdef debug_set_bc_neu_l
-      dmsg << "hg(Ac): " << hg(Ac);
-      #endif
     }
   }
 
-  // Add Neumann BCs contribution to the residual (and tangent if flwP)
+  // Add Neumann BCs contribution to the LHS/RHS
+  //
+  // if follower pressure load.
   //
   if (lBc.flwP) {
-    eq_assem::b_neu_folw_p(com_mod, lBc, lFa, hg, Dg);
+    eq_assem::b_neu_folw_p(com_mod, lFa, hg, Dg);
 
   } else {
     eq_assem::b_assem_neu_bc(com_mod, lFa, hg, Yg);
@@ -1458,7 +1387,10 @@ void set_bc_neu_l(ComMod& com_mod, const CmMod& cm_mod, const bcType& lBc, const
   }
 }
 
-/// @brief Set Robin BC contribution to residual and tangent
+//-------------
+// set_bc_rbnl
+//-------------
+// Set Robin BC
 //
 void set_bc_rbnl(ComMod& com_mod, const faceType& lFa, const double ks, const double cs, const bool isN, 
   const Array<double>& Yg, const Array<double>& Dg)
@@ -1473,9 +1405,9 @@ void set_bc_rbnl(ComMod& com_mod, const faceType& lFa, const double ks, const do
   auto& cDmn = com_mod.cDmn;
 
   int s = eq.s;
-  double afv = eq.af * eq.gam * dt;
-  double afu = eq.af * eq.beta * dt * dt;
-  double afm = afv / eq.am;
+  double am = eq.af * eq.gam * dt;
+  double af = eq.af * eq.beta * dt * dt;
+  double afm = am / eq.am;
 
   int iM = lFa.iM;
   int eNoN = lFa.eNoN;
@@ -1492,8 +1424,7 @@ void set_bc_rbnl(ComMod& com_mod, const faceType& lFa, const double ks, const do
     for (int a = 0; a < eNoN; a++) {
       int Ac = lFa.IEN(a,e);
       ptr(a) = Ac;
-
-      for (int i = 0; i < nsd; i++) {
+      for (int i = 0; i < nsd; a++) {
         xl(i,a) = com_mod.x(i,Ac);
         yl(i,a) = Yg(i+s,Ac);
         dl(i,a) = Dg(i+s,Ac);
@@ -1511,9 +1442,7 @@ void set_bc_rbnl(ComMod& com_mod, const faceType& lFa, const double ks, const do
       Vector<double> nV(nsd);
       auto Nx = lFa.Nx.slice(g);
       nn::gnnb(com_mod, lFa, e, g, nsd, nsd-1, eNoN, Nx, nV);
-      double Jac = sqrt(utils::norm(nV));
-      nV  = nV / Jac;
-      double w = lFa.w(g) * Jac; 
+      double w = lFa.w(g) * sqrt(utils::norm(nV));
       N = lFa.N.col(g);
       Vector<double> u(nsd), ud(nsd);
 
@@ -1526,26 +1455,28 @@ void set_bc_rbnl(ComMod& com_mod, const faceType& lFa, const double ks, const do
 
       auto nDn = mat_fun::mat_id(nsd);
       Vector<double> h;
-      h = ks*u + cs*ud;
 
       if (isN) {
-        h = utils::norm(h, nV) * nV;
+        h = (ks*utils::norm(u, nV) + cs*utils::norm(ud, nV)) * nV;
         for (int a = 0; a < nsd; a++) {
           for (int b = 0; b < nsd; b++) {
             nDn(a,b) = nV(a)*nV(b);
           }
         }
+
+      } else {
+        h = ks*u + cs*ud;
       }
 
       if (nsd == 3) {
         for (int a = 0; a < eNoN; a++) {
-          lR(0,a) = lR(0,a) + w*N(a)*h(0);
-          lR(1,a) = lR(1,a) + w*N(a)*h(1);
-          lR(2,a) = lR(2,a) + w*N(a)*h(2);
+          lR(0,a) = lR(0,a) - w*N(a)*h(0);
+          lR(1,a) = lR(1,a) - w*N(a)*h(1);
+          lR(2,a) = lR(2,a) - w*N(a)*h(2);
         }
 
         if (cPhys == EquationType::phys_ustruct) {
-          double wl = w * afv;
+          double wl = w*af;
 
           for (int a = 0; a < eNoN; a++) {
             for (int b = 0; b < eNoN; b++) {
@@ -1594,34 +1525,34 @@ void set_bc_rbnl(ComMod& com_mod, const faceType& lFa, const double ks, const do
         // cPhys != EquationType::phys_ustruct
         //
         } else {
-          double wl = w * (ks*afu + cs*afv);
+          double wl = w*(ks*af + cs*am);
 
           for (int a = 0; a < eNoN; a++) {
             for (int b = 0; b < eNoN; b++) {
               double T1 = N(a)*N(b);
-              lK(0,a,b) = lK(0,a,b) + wl*T1*nDn(0,0);
-              lK(1,a,b) = lK(1,a,b) + wl*T1*nDn(0,1);
-              lK(2,a,b) = lK(2,a,b) + wl*T1*nDn(0,2);
+              lK(0,a,b) = lK(0,a,b) - wl*T1*nDn(0,0);
+              lK(1,a,b) = lK(1,a,b) - wl*T1*nDn(0,1);
+              lK(2,a,b) = lK(2,a,b) - wl*T1*nDn(0,2);
 
-              lK(dof+0,a,b) = lK(dof+0,a,b) + wl*T1*nDn(1,0);
-              lK(dof+1,a,b) = lK(dof+1,a,b) + wl*T1*nDn(1,1);
-              lK(dof+2,a,b) = lK(dof+2,a,b) + wl*T1*nDn(1,2);
+              lK(dof+0,a,b) = lK(dof+0,a,b) - wl*T1*nDn(1,0);
+              lK(dof+1,a,b) = lK(dof+1,a,b) - wl*T1*nDn(1,1);
+              lK(dof+2,a,b) = lK(dof+2,a,b) - wl*T1*nDn(1,2);
 
-              lK(2*dof+0,a,b) = lK(2*dof+0,a,b) + wl*T1*nDn(2,0);
-              lK(2*dof+1,a,b) = lK(2*dof+1,a,b) + wl*T1*nDn(2,1);
-              lK(2*dof+2,a,b) = lK(2*dof+2,a,b) + wl*T1*nDn(2,2);
+              lK(2*dof+0,a,b) = lK(2*dof+2,a,b)-wl*T1*nDn(2,0);
+              lK(2*dof+1,a,b) = lK(2*dof+1,a,b)-wl*T1*nDn(2,1);
+              lK(2*dof+2,a,b) = lK(2*dof+2,a,b)-wl*T1*nDn(2,2);
             }
           }
         }
 
       } else if (nsd == 2) {
         for (int a = 0; a < eNoN; a++) {
-          lR(0,a) = lR(0,a) + w*N(a)*h(0);
-          lR(1,a) = lR(1,a) + w*N(a)*h(1);
+          lR(0,a) = lR(0,a) - w*N(a)*h(0);
+          lR(1,a) = lR(1,a) - w*N(a)*h(1);
          }
 
         if (cPhys == EquationType::phys_ustruct) {
-          double wl = w*afv;
+          double wl = w*af;
 
           for (int a = 0; a < eNoN; a++) {
             for (int b = 0; b < eNoN; b++) {
@@ -1648,15 +1579,15 @@ void set_bc_rbnl(ComMod& com_mod, const faceType& lFa, const double ks, const do
           }
 
         } else {
-          double wl = w * (ks*afu + cs*afv);
+          double wl = w*(ks*af + cs*am);
 
           for (int a = 0; a < eNoN; a++) {
             for (int b = 0; b < eNoN; b++) {
               double T1 = N(a)*N(b);
-              lK(0,a,b) = lK(0,a,b) + wl*T1*nDn(0,0);
-              lK(1,a,b) = lK(1,a,b) + wl*T1*nDn(0,1);
-              lK(dof+0,a,b) = lK(dof+0,a,b) + wl*T1*nDn(1,0);
-              lK(dof+1,a,b) = lK(dof+1,a,b) + wl*T1*nDn(1,1);
+              lK(0,a,b) = lK(0,a,b) - wl*T1*nDn(0,0);
+              lK(1,a,b) = lK(1,a,b) - wl*T1*nDn(0,1);
+              lK(dof+0,a,b) = lK(dof+0,a,b) - wl*T1*nDn(1,0);
+              lK(dof+1,a,b) = lK(dof+1,a,b) - wl*T1*nDn(1,1);
             }
           }
         }
@@ -1679,7 +1610,10 @@ void set_bc_rbnl(ComMod& com_mod, const faceType& lFa, const double ks, const do
 
 }
 
-/// @brief Set Traction BC
+//---------------
+// set_bc_trac_l
+//---------------
+// Set Traction BC
 //
 void set_bc_trac_l(ComMod& com_mod, const CmMod& cm_mod, const bcType& lBc, const faceType& lFa) 
 {
@@ -1794,14 +1728,18 @@ void set_bc_trac_l(ComMod& com_mod, const CmMod& cm_mod, const bcType& lBc, cons
   }
 }
 
-/// @brief Treat Neumann boundaries that are not deforming.
-///
-/// Leave the row corresponding to the master node of the owner
-/// process in the LHS matrix and the residual vector untouched. For
-/// all the other nodes of the face, set the residual to be 0 for
-/// velocity dofs. Zero out all the elements of corresponding rows of
-/// the LHS matrix. Make the diagonal elements of the LHS matrix equal
-/// to 1 and the column entry corresponding to the master node, -1
+//------------------
+// set_bc_undef_neu
+//------------------
+//
+// Treat Neumann boundaries that are not deforming.
+//
+// Leave the row corresponding to the master node of the owner
+// process in the LHS matrix and the residue vector untouched. For
+// all the other nodes of the face, set the residue to be 0 for
+// velocity dofs. Zero out all the elements of corresponding rows of
+// the LHS matrix. Make the diagonal elements of the LHS matrix equal
+// to 1 and the column entry corresponding to the master node, -1
 //
 void set_bc_undef_neu(ComMod& com_mod)
 {
@@ -1821,7 +1759,10 @@ void set_bc_undef_neu(ComMod& com_mod)
   }
 }
 
-/// Modifies: com_mod.R, com_mod.Val
+//--------------------
+// set_bc_undef_neu_l
+//--------------------
+// Modifies: com_mod.R, com_mod.Val
 //
 void set_bc_undef_neu_l(ComMod& com_mod, const bcType& lBc, const faceType& lFa)
 {
