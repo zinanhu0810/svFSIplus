@@ -124,12 +124,7 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
       if (utils::btest(bc.bType, iBC_Neu)) {
         // If fluid, FSI, or CMM, use reference configuration to compute flowrate integral
         // Note that for FSI, mvMsh will modify geometry in gnnb()
-        if (cPhys == EquationType::phys_fluid) || (cPhys == EquationType::phys_FSI) || (cPhys == EquationType::phys_CMM)) {
-
-          // Must use follower pressure load for 0D coupling with struct/ustruct
-          if (!bc.flwP) { 
-            throw std::runtime_error("[calc_der_cpl_bc]  Follower pressure load must be used for 0D coupling with struct/ustruct");
-          }
+        if ((cPhys == EquationType::phys_fluid) || (cPhys == EquationType::phys_FSI) || (cPhys == EquationType::phys_CMM)) {
           cfg_o = MechanicalConfigurationType::old_timestep;
           cfg_n = MechanicalConfigurationType::new_timestep;
         }
@@ -221,8 +216,6 @@ void calc_der_cpl_bc(ComMod& com_mod, const CmMod& cm_mod)
     int i = bc.cplBCptr;
 
     if (i != -1 && utils::btest(bc.bType, iBC_Neu)) {
-        double orgY = cplBC.fa[i].y;
-        double orgQ = cplBC.fa[i].Qn;
         // Finite difference perturbation in flowrate
         cplBC.fa[i].Qn = orgQ[i] + diff;
 

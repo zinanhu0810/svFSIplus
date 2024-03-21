@@ -740,6 +740,10 @@ class cplBCType
     /// @brief Whether to use genBC
     bool useGenBC = false;
 
+    //  Whether to use svZeroD
+    bool useSvZeroD = false;
+
+    
     /// @brief Whether to initialize RCR from flow data
     bool initRCR = false;
 
