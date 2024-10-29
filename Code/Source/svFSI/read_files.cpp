@@ -1299,12 +1299,12 @@ void read_domain(Simulation* simulation, EquationParameters* eq_params, eqType& 
             }
           break;
 
-          case PhysicalProperyType::solid_viscosity:
-            rtmp = domain_params->solid_viscosity.value();
-          break;
-
           case PhysicalProperyType::source_term:
             rtmp = domain_params->source_term.value();
+          break;
+
+          case PhysicalProperyType::inverse_darcy_permeability:
+            rtmp = domain_params->inverse_darcy_permeability.value();
           break;
         }
 
@@ -1333,7 +1333,13 @@ void read_domain(Simulation* simulation, EquationParameters* eq_params, eqType& 
      if ((lEq.dmn[iDmn].phys == EquationType::phys_fluid) ||  
          (lEq.dmn[iDmn].phys == EquationType::phys_stokes) ||  
          (lEq.dmn[iDmn].phys == EquationType::phys_CMM && !com_mod.cmmInit)) {
-       read_visc_model(simulation, eq_params, domain_params, lEq.dmn[iDmn]);
+       read_fluid_visc_model(simulation, eq_params, domain_params, lEq.dmn[iDmn]);
+     }
+
+     // Set parameters for a fluid viscosity model.
+     if ((lEq.dmn[iDmn].phys == EquationType::phys_struct) ||  
+         (lEq.dmn[iDmn].phys == EquationType::phys_ustruct)) {
+       read_solid_visc_model(simulation, eq_params, domain_params, lEq.dmn[iDmn]);
      }
   }
 }
@@ -1549,9 +1555,8 @@ void read_fiber_temporal_values_file(FiberReinforcementStressParameters& fiber_p
 
   int i, j;
   temporal_values_file >> i >> j; 
-
-  if (i < 2) {
-    throw std::runtime_error("The fiber reinforcement stress the values file '" + file_name + "' has an incorrect format.");
+  if ((i == 0) || (j == 0) || (i < 2)) {
+    throw std::runtime_error("Error reading the first line of the fiber reinforcement stress the values file '" + file_name + "' has an incorrect format.");
   }
 
   lDmn.stM.Tf.gt.d = 1;
@@ -1805,7 +1810,7 @@ void read_files(Simulation* simulation, const std::string& file_name)
           if ((dmn.phys != EquationType::phys_ustruct) && (dmn.phys != EquationType::phys_struct)) { 
             continue; 
           }
-          if (dmn.stM.isoType != ConstitutiveModelType::stIso_HO) {
+          if ((dmn.stM.isoType != ConstitutiveModelType::stIso_HO)) {
             throw std::runtime_error("Active strain is allowed with Holzapfel-Ogden passive constitutive model only");
           }
         }
@@ -2163,7 +2168,7 @@ void read_mat_model(Simulation* simulation, EquationParameters* eq_params, Domai
 
     } else if (fiber_stress == "unsteady") {
       lDmn.stM.Tf.fType = utils::ibset(lDmn.stM.Tf.fType, static_cast<int>(BoundaryConditionType::bType_ustd));
-      lDmn.stM.Tf.gt.lrmp = fiber_params.ramp_function.defined();
+      lDmn.stM.Tf.gt.lrmp = fiber_params.ramp_function.value();
       read_fiber_temporal_values_file(fiber_params, lDmn);
     }
   }
@@ -2365,6 +2370,9 @@ void read_temp_spat_values(const ComMod& com_mod, const mshType& msh, const face
 
   int ndof, num_ts, num_nodes;
   file_stream >> ndof >> num_ts >> num_nodes;
+  if ((ndof == 0) || (num_ts == 0) || (num_nodes == 0)) {
+    throw std::runtime_error("Error reading the first line of the temporal and spatial values file '" + file_name + "'.");
+  }
 
   if (num_nodes != lFa.nNo) {
     throw std::runtime_error("The number of nodes (" + std::to_string(num_nodes) + ") in the temporal and spatial values file '" + 
@@ -2477,6 +2485,9 @@ void read_temp_spat_values(const ComMod& com_mod, const mshType& msh, const std:
   //
   int ndof, num_ts, num_nodes;
   file_stream >> ndof >> num_ts >> num_nodes;
+  if ((ndof == 0) || (num_ts == 0) || (num_nodes == 0)) {
+    throw std::runtime_error("Error reading the first line of the temporal and spatial values file '" + file_name + "'.");
+  }
   #ifdef debug_read_ts_values_bf 
   dmsg << "ndof: " << ndof;
   dmsg << "num_ts: " << num_ts;
@@ -2584,8 +2595,8 @@ void read_temporal_values(const std::string& file_name, bcType& lBc)
 
   int i, j;
   temporal_values_file >> i >> j; 
-  if (i < 2) {
-    throw std::runtime_error("The temporal values file '" + file_name + "' has an incorrect format.");
+  if ((i == 0) || (j == 0) || (i < 2)) {
+    throw std::runtime_error("Error reading the first line of the temporal values file '" + file_name + "'.");
   }
   lBc.gt.n = j;
 
@@ -2609,6 +2620,11 @@ void read_temporal_values(const std::string& file_name, bcType& lBc)
       }
       values.push_back(value);
     }
+
+    if (values.size() != 2) { 
+      throw std::runtime_error("Error reading values for the temporal values file '" + file_name + "' for line '" + line + "'.");
+    }
+
     temporal_values.push_back(values);
   }
 
@@ -2674,7 +2690,7 @@ void read_temporal_values(const std::string& file_name, bfType& lBf)
 //----------------
 // read_trac_bcff
 //----------------
-// Reads pressure/traction data from a vtp file and stores in moving BC data structure.
+// Reads pressure/traction data from a vtk vtp or vtu file and stores in moving BC data structure.
 //
 // Reproduces 'SUBROUTINE READTRACBCFF(lMB, lFa, fName)' defined in READFILES.f.
 //
@@ -2686,15 +2702,15 @@ void read_trac_bcff(ComMod& com_mod, MBType& lMB, faceType& lFa, const std::stri
     throw std::runtime_error("The VTK VTP traction data file '" + fName + "' can't be read.");
   }
 
-  // Read the vtp file.
+  // Read the vtk file.
   //
-  VtkVtpData vtp_data(fName);
-  int num_points = vtp_data.num_points();
+  auto vtk_data = VtkData::create_reader(fName);
+  int num_points = vtk_data->num_points();
   if (num_points == 0) {
     throw std::runtime_error("The VTK VTP traction data file '" + fName + "' does not contain any points.");
   }
 
-  int num_elems = vtp_data.num_elems();
+  int num_elems = vtk_data->num_elems();
   if (num_elems == 0) {
     throw std::runtime_error("The VTK VTP traction data file '" + fName + "' does not contain any elements.");
   }
@@ -2709,7 +2725,7 @@ void read_trac_bcff(ComMod& com_mod, MBType& lMB, faceType& lFa, const std::stri
   }
 
   // Check that the vtk file has traction data.
-  if (!vtp_data.has_point_data(data_name)) {
+  if (!vtk_data->has_point_data(data_name)) {
     throw std::runtime_error("No PointData DataArray named '" + data_name + "' found in the VTK VTP traction data file '" + fName +
         "' for the '" + lFa.name + "' face.");
   }
@@ -2722,7 +2738,7 @@ void read_trac_bcff(ComMod& com_mod, MBType& lMB, faceType& lFa, const std::stri
   faceType gFa;
   gFa.nNo = num_points;
   gFa.x.resize(com_mod.nsd, gFa.nNo);
-  vtp_data.copy_points(tmpX2);
+  vtk_data->copy_points(tmpX2);
 
   for (int i = 0; i < num_points; i++) {
     for (int j = 0; j < com_mod.nsd; j++) {
@@ -2731,9 +2747,9 @@ void read_trac_bcff(ComMod& com_mod, MBType& lMB, faceType& lFa, const std::stri
   }
 
   if (data_name == "Pressure") {
-    vtp_data.copy_point_data(data_name, tmpX1);
+    vtk_data->copy_point_data(data_name, tmpX1);
   } else { 
-    vtp_data.copy_point_data(data_name, tmpX2);
+    vtk_data->copy_point_data(data_name, tmpX2);
   }
 
   // Project traction from gFa to lFa. First prepare lFa%x, lFa%IEN
@@ -2833,11 +2849,11 @@ void read_rmsh(Simulation* simulation, EquationParameters* eq_param)
 }
 
 //-----------------
-// read_visc_model
+// read_fluid_visc_model
 //-----------------
-// Set the viscosity material model parameters for the given domain.
+// Set the fluid viscosity material model parameters for the given domain.
 //
-void read_visc_model(Simulation* simulation, EquationParameters* eq_params, DomainParameters* domain_params, dmnType& lDmn)
+void read_fluid_visc_model(Simulation* simulation, EquationParameters* eq_params, DomainParameters* domain_params, dmnType& lDmn)
 { 
   using namespace consts;
 
@@ -2846,14 +2862,14 @@ void read_visc_model(Simulation* simulation, EquationParameters* eq_params, Doma
   FluidViscosityModelType vmodel_type;
   std::string vmodel_str; 
 
-  if (domain_params->viscosity.model.defined()) {
-    vmodel_str = domain_params->viscosity.model.value();
+  if (domain_params->fluid_viscosity.model.defined()) {
+    vmodel_str = domain_params->fluid_viscosity.model.value();
     std::transform(vmodel_str.begin(), vmodel_str.end(), vmodel_str.begin(), ::tolower);
 
     try {
       vmodel_type = fluid_viscosity_model_name_to_type.at(vmodel_str);
     } catch (const std::out_of_range& exception) {
-      throw std::runtime_error("Unknown viscosity model '" + vmodel_str + "'.");
+      throw std::runtime_error("Unknown fluid viscosity model '" + vmodel_str + "'.");
     }
   } else {
     vmodel_type = FluidViscosityModelType::viscType_Const;
@@ -2861,16 +2877,54 @@ void read_visc_model(Simulation* simulation, EquationParameters* eq_params, Doma
 
   // Set the parameters for the given viscosity model.
   //
-  auto& viscosity_params = domain_params->viscosity;
+  auto& viscosity_params = domain_params->fluid_viscosity;
 
   try {
-    set_viscosity_props[vmodel_type](simulation, viscosity_params, lDmn);
+    set_fluid_viscosity_props[vmodel_type](simulation, viscosity_params, lDmn);
    } catch (const std::bad_function_call& exception) {
-    throw std::runtime_error("[read_visc_model] Viscosity model '" + vmodel_str + "' is not supported.");
+    throw std::runtime_error("[read_fluid_visc_model] Viscosity model '" + vmodel_str + "' is not supported.");
   }
 
-  if ((lDmn.phys == EquationType::phys_stokes) && (lDmn.visc.viscType != FluidViscosityModelType::viscType_Const)) {
+  if ((lDmn.phys == EquationType::phys_stokes) && (lDmn.fluid_visc.viscType != FluidViscosityModelType::viscType_Const)) {
     throw std::runtime_error("Only constant viscosity is allowed for Stokes flow.");
+  }
+}
+
+//-----------------
+// read_solid_visc_model
+//-----------------
+// Set the solid viscosity material model parameters for the given domain.
+//
+void read_solid_visc_model(Simulation* simulation, EquationParameters* eq_params, DomainParameters* domain_params, dmnType& lDmn)
+{ 
+  using namespace consts;
+
+  // Get viscosity model.
+  //
+  SolidViscosityModelType vmodel_type;
+  std::string vmodel_str; 
+
+  if (domain_params->solid_viscosity.model.defined()) {
+    vmodel_str = domain_params->solid_viscosity.model.value();
+    std::transform(vmodel_str.begin(), vmodel_str.end(), vmodel_str.begin(), ::tolower);
+
+    try {
+      vmodel_type = solid_viscosity_model_name_to_type.at(vmodel_str);
+    } catch (const std::out_of_range& exception) {
+      throw std::runtime_error("Unknown solid viscosity model '" + vmodel_str + "'.");
+    }
+  } else {
+    vmodel_type = SolidViscosityModelType::viscType_Newtonian;
+  }
+
+  // Set the parameters for the given viscosity model.
+  //
+  auto& viscosity_params = domain_params->solid_viscosity;
+
+  try {
+    set_solid_viscosity_props[vmodel_type](simulation, viscosity_params, lDmn);
+   } catch (const std::bad_function_call& exception) {
+    throw std::runtime_error("[read_solid_visc_model] Viscosity model '" + vmodel_str + "' is not supported.");
   }
 }
 
@@ -2880,7 +2934,7 @@ void read_visc_model(Simulation* simulation, EquationParameters* eq_params, Doma
 // Read CMM variable wall properties from a file.
 //
 // Modifies:
-//   com_mod.msh[iM.x - seems to use this as a scratch array.
+//   com_mod.msh[iM].x - seems to use this as a scratch array.
 //
 void read_wall_props_ff(ComMod& com_mod, const std::string& file_name, const int iM, const int iFa)
 {

@@ -120,6 +120,7 @@ SetEquationPropertiesMapType set_equation_props = {
     com_mod.cmmVarWall = true;
 
     if (com_mod.varWallProps.size() == 0) {
+      // varWallProps = array of size 2 x total number of nodes across all meshes and all processors; first column is thickness and second column is elastic modulus
       com_mod.varWallProps.resize(2, com_mod.gtnNo);
     }
 
@@ -217,11 +218,12 @@ SetEquationPropertiesMapType set_equation_props = {
 
   propL[0][0] = PhysicalProperyType::fluid_density;
   propL[1][0] = PhysicalProperyType::backflow_stab;
-  propL[2][0] = PhysicalProperyType::f_x;
-  propL[3][0] = PhysicalProperyType::f_y;
+  propL[2][0] = PhysicalProperyType::inverse_darcy_permeability;
+  propL[3][0] = PhysicalProperyType::f_x;
+  propL[4][0] = PhysicalProperyType::f_y;
 
   if (simulation->com_mod.nsd == 3) {
-    propL[4][0] = PhysicalProperyType::f_z;
+    propL[5][0] = PhysicalProperyType::f_z;
   }
 
   // Set fluid domain properties.
@@ -330,11 +332,10 @@ SetEquationPropertiesMapType set_equation_props = {
   propL[1][n] = PhysicalProperyType::elasticity_modulus;
   propL[2][n] = PhysicalProperyType::poisson_ratio;
   propL[3][n] = PhysicalProperyType::damping;
-  propL[4][n] = PhysicalProperyType::solid_viscosity;
-  propL[5][n] = PhysicalProperyType::f_x;
-  propL[6][n] = PhysicalProperyType::f_y;
+  propL[4][n] = PhysicalProperyType::f_x;
+  propL[5][n] = PhysicalProperyType::f_y;
   if (simulation->com_mod.nsd == 3) {
-    propL[7][n] = PhysicalProperyType::f_z;
+    propL[6][n] = PhysicalProperyType::f_z;
   }
 
   // Set ustruct properties.
@@ -342,13 +343,12 @@ SetEquationPropertiesMapType set_equation_props = {
   propL[0][n] = PhysicalProperyType::solid_density;
   propL[1][n] = PhysicalProperyType::elasticity_modulus;
   propL[2][n] = PhysicalProperyType::poisson_ratio;
-  propL[3][n] = PhysicalProperyType::solid_viscosity;
-  propL[4][n] = PhysicalProperyType::ctau_M;
-  propL[5][n] = PhysicalProperyType::ctau_C;
-  propL[6][n] = PhysicalProperyType::f_x;
-  propL[7][n] = PhysicalProperyType::f_y;
+  propL[3][n] = PhysicalProperyType::ctau_M;
+  propL[4][n] = PhysicalProperyType::ctau_C;
+  propL[5][n] = PhysicalProperyType::f_x;
+  propL[6][n] = PhysicalProperyType::f_y;
   if (simulation->com_mod.nsd == 3) {
-    propL[8][n] = PhysicalProperyType::f_z;
+    propL[7][n] = PhysicalProperyType::f_z;
   }
 
   // Set lElas properties.
@@ -570,11 +570,10 @@ SetEquationPropertiesMapType set_equation_props = {
   propL[1][0] = PhysicalProperyType::damping;
   propL[2][0] = PhysicalProperyType::elasticity_modulus;
   propL[3][0] = PhysicalProperyType::poisson_ratio;
-  propL[4][0] = PhysicalProperyType::solid_viscosity;
-  propL[5][0] = PhysicalProperyType::f_x;
-  propL[6][0] = PhysicalProperyType::f_y;
+  propL[4][0] = PhysicalProperyType::f_x;
+  propL[5][0] = PhysicalProperyType::f_y;
   if (simulation->com_mod.nsd == 3) {
-    propL[7][0] = PhysicalProperyType::f_z;
+    propL[6][0] = PhysicalProperyType::f_z;
   }
 
   read_domain(simulation, eq_params, lEq, propL);
@@ -614,13 +613,12 @@ SetEquationPropertiesMapType set_equation_props = {
   propL[0][0] = PhysicalProperyType::solid_density;
   propL[1][0] = PhysicalProperyType::elasticity_modulus;
   propL[2][0] = PhysicalProperyType::poisson_ratio;
-  propL[3][0] = PhysicalProperyType::solid_viscosity;
-  propL[4][0] = PhysicalProperyType::ctau_M;
-  propL[5][0] = PhysicalProperyType::ctau_C;
-  propL[6][0] = PhysicalProperyType::f_x;
-  propL[7][0] = PhysicalProperyType::f_y;
+  propL[3][0] = PhysicalProperyType::ctau_M;
+  propL[4][0] = PhysicalProperyType::ctau_C;
+  propL[5][0] = PhysicalProperyType::f_x;
+  propL[6][0] = PhysicalProperyType::f_y;
   if (simulation->com_mod.nsd == 3) {
-    propL[8][0] = PhysicalProperyType::f_z;
+    propL[7][0] = PhysicalProperyType::f_z;
   }
 
   read_domain(simulation, eq_params, lEq, propL);

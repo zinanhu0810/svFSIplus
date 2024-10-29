@@ -640,7 +640,7 @@ void set_bc_cmm_l(ComMod& com_mod, const CmMod& cm_mod, const faceType& lFa, con
 
     Vector<double> pSl(6), vwp(2); 
 
-    for (int a = 0; a < 3; a++) { 
+    for (int a = 0; a < 3; a++) {
       int Ac = lFa.IEN(a,e);
       ptr(a) = Ac;
 
@@ -1449,6 +1449,16 @@ void set_bc_neu_l(ComMod& com_mod, const CmMod& cm_mod, const bcType& lBc, const
     eq_assem::b_assem_neu_bc(com_mod, lFa, hg, Yg);
   }
 
+
+  // Now update surface integrals involved in coupled/resistance BC
+  // contribution to stiffness matrix to reflect deformed geometry.
+  // We must do this if we have a resistance boundary condition and
+  // a follower pressure load (struct/ustruct) or a moving mesh (FSI)
+  if (utils::btest(lBc.bType, iBC_res)) {
+    if (lBc.flwP || com_mod.mvMsh) {
+      eq_assem::fsi_ls_upd(com_mod, lBc, lFa);
+    }
+  }
   // Now treat Robin BC (stiffness and damping) here
   //
   if (utils::btest(lBc.bType,iBC_Robin)) {

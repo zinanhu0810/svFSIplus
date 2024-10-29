@@ -28,12 +28,31 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/**
+ * @file ustruct.cpp
+ * @brief Structural mechanics implementation based on the following reference:
+ *
+ * Ju Liu, Alison L. Marsden,
+ * A unified continuum and variational multiscale formulation for fluids, solids, and fluid–structure interaction,
+ * Computer Methods in Applied Mechanics and Engineering,
+ * Volume 337,
+ * 2018,
+ * Pages 549-597,
+ * ISSN 0045-7825,
+ * https://doi.org/10.1016/j.cma.2018.03.045.
+ *
+ * This paper describes a unified framework for fluid, solids, and FSI. The code
+ * in this file is based on the solid mechanics portion of the paper, which can be
+ * found in Section 4.
+ */
+
 #include "ustruct.h"
 
 #include "all_fun.h"
 #include "fs.h"
 #include "mat_fun.h"
 #include "mat_models.h"
+#include "mat_models_carray.h"
 #include "nn.h"
 #include "utils.h"
 
@@ -366,13 +385,13 @@ void construct_usolid(ComMod& com_mod, CepMod& cep_mod, const mshType& lM, const
         auto N0 = fs[0].N.col(g);
         auto N1 = fs[1].N.col(g);
         ustruct_3d_c(com_mod, cep_mod, vmsStab, fs[0].eNoN, fs[1].eNoN, w, Jac, N0, N1, Nwx, 
-            Nqx, al, yl, dl, bfl, ksix, lR, lK, lKd);
+            Nqx, al, yl, dl, bfl, lR, lK, lKd);
 
       } else if (nsd == 2) {
         auto N0 = fs[0].N.col(g);
         auto N1 = fs[1].N.col(g);
         ustruct_2d_c(com_mod, cep_mod, vmsStab, fs[0].eNoN, fs[1].eNoN, w, Jac, N0, N1, Nwx, 
-            Nqx, al, yl, dl, bfl, ksix, lR, lK, lKd);
+            Nqx, al, yl, dl, bfl, lR, lK, lKd);
       }
 
     } // for g = 0 to fs[1].nG
@@ -409,7 +428,7 @@ int get_col_ptr(ComMod& com_mod, const int rowN, const int colN)
 void ustruct_2d_c(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const int eNoNw, const int eNoNq,
     const double w, const double Je, const Vector<double>& Nw,  const Vector<double>& Nq,
     const Array<double>& Nwx, const Array<double>& Nqx, const Array<double>& al, const Array<double>& yl, 
-    const Array<double>& dl, const Array<double>& bfl, const Array<double>& Kxi, Array<double>& lR, Array3<double>& lK, 
+    const Array<double>& dl, const Array<double>& bfl, Array<double>& lR, Array3<double>& lK, 
     Array3<double>& lKd)
 {
   using namespace consts;
@@ -431,8 +450,6 @@ void ustruct_2d_c(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
   int cDmn = com_mod.cDmn;
   auto& dmn = eq.dmn[cDmn];
   const double dt = com_mod.dt;
-  double ctV = 36.0;
-  double mu = dmn.prop[PhysicalProperyType::solid_viscosity];
 
   Vector<double> fb(2);
   fb[0] = dmn.prop[PhysicalProperyType::f_x];
@@ -509,20 +526,9 @@ void ustruct_2d_c(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
   //
   double tauM = 0.0;
   double tauC = 0.0;
-  Array<double> Kx(2,2); 
 
   if (vmsFlag) {
     mat_models::get_tau(com_mod, eq.dmn[cDmn], Jac, Je, tauM, tauC);
-
-    // Stabilization parameter for solid viscosity
-    Kx = mat_mul(Kxi, Fi);
-    Kx = mat_mul(transpose(Fi), Kx);
-
-    double tauV = Kx(0,0)*Kx(0,0) + Kx(1,0)*Kx(1,0) + 
-                  Kx(0,1)*Kx(0,1) + Kx(1,1)*Kx(1,1);
-
-    tauV = ctV * mu * mu * tauV;
-    tauM = 1.0 / sqrt( tauV + pow(1.0/tauM,2.0));
 
   } else {
     tauM = 0.0;
@@ -626,7 +632,7 @@ void ustruct_2d_c(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
 void ustruct_3d_c(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const int eNoNw, const int eNoNq,
     const double w, const double Je, const Vector<double>& Nw,  const Vector<double>& Nq,
     const Array<double>& Nwx, const Array<double>& Nqx, const Array<double>& al, const Array<double>& yl, 
-    const Array<double>& dl, const Array<double>& bfl, const Array<double>& Kxi, Array<double>& lR, Array3<double>& lK, 
+    const Array<double>& dl, const Array<double>& bfl, Array<double>& lR, Array3<double>& lK, 
     Array3<double>& lKd)
 {
   using namespace consts;
@@ -648,8 +654,6 @@ void ustruct_3d_c(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
   int cDmn = com_mod.cDmn;
   auto& dmn = eq.dmn[cDmn];
   const double dt = com_mod.dt;
-  double ctV = 36.0;
-  double mu = dmn.prop[PhysicalProperyType::solid_viscosity];
 
   Vector<double> fb(3);
   fb[0] = dmn.prop[PhysicalProperyType::f_x];
@@ -745,21 +749,9 @@ void ustruct_3d_c(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
   //
   double tauM = 0.0;
   double tauC = 0.0;
-  Array<double> Kx(3,3); 
 
   if (vmsFlag) {
     mat_models::get_tau(com_mod, eq.dmn[cDmn], Jac, Je, tauM, tauC);
-
-    // Stabilization parameter for solid viscosity
-    Kx = mat_mul(Kxi, Fi);
-    Kx = mat_mul(transpose(Fi), Kx);
-
-    double tauV = Kx(0,0)*Kx(0,0) + Kx(1,0)*Kx(1,0) + Kx(2,0)*Kx(2,0) + 
-                  Kx(0,1)*Kx(0,1) + Kx(1,1)*Kx(1,1) + Kx(2,1)*Kx(2,1) + 
-                  Kx(0,2)*Kx(0,2) + Kx(1,2)*Kx(1,2) + Kx(2,2)*Kx(2,2);
-
-    tauV = ctV * mu * mu * tauV;
-    tauM = 1.0 / sqrt( tauV + pow(1.0/tauM,2.0));
 
   } else {
     tauM = 0.0;
@@ -913,7 +905,6 @@ void ustruct_2d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
   fb[0] = dmn.prop[PhysicalProperyType::f_x];
   fb[1] = dmn.prop[PhysicalProperyType::f_y];
 
-  double mu = dmn.prop[PhysicalProperyType::solid_viscosity];
   double am = eq.am;
   double af = eq.af * eq.gam * dt;
   double afm = af / am;
@@ -979,16 +970,12 @@ void ustruct_2d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
   double Ja = 0;
   mat_models::get_pk2cc_dev(com_mod, cep_mod, eq.dmn[cDmn], F, nFn, fN, ya_g, Siso, Dm, Ja);
 
-  // Viscous contribution
-  // Velocity gradient in current configuration
-  auto VxFi = mat_mul(vx, Fi);
-
-  // Deviatoric strain tensor
-  auto ddev = mat_dev(mat_symm(VxFi,2), 2);
-
-  // 2nd Piola-Kirchhoff stress due to viscosity
-  auto Svis = mat_mul(ddev, transpose(Fi));
-  Svis = 2.0*mu*Jac*mat_mul(Fi, Svis);
+   // Viscous 2nd Piola-Kirchhoff stress and tangent contributions
+  Array<double> Svis(2,2);
+  Array3<double> Kvis_u(4, eNoNw, eNoNw);
+  Array3<double> Kvis_v(4, eNoNw, eNoNw);
+  
+  mat_models_carray::get_visc_stress_and_tangent<2>(dmn, eNoNw, Nwx, vx, F, Svis, Kvis_u, Kvis_v);
 
   // Compute rho and beta depending on the volumetric penalty model
   //
@@ -1009,7 +996,7 @@ void ustruct_2d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
     tauC = 0.0;
   }
 
-  // Total isochoric 2nd Piola-Kirchhoff stress
+  // Total isochoric 2nd Piola-Kirchhoff stress (Elastic + Viscous)
   Siso = Siso + Svis;
 
   // Deviatoric 1st Piola-Kirchhoff tensor (P)
@@ -1026,6 +1013,8 @@ void ustruct_2d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
     NxFi(1,a) = Nwx(0,a)*Fi(0,1) + Nwx(1,a)*Fi(1,1);
   }
 
+   // Velocity gradient in current configuration
+  auto VxFi = mat_mul(vx, Fi);
   double rC  = beta*pd + VxFi(1,1) + VxFi(2,2);
   double rCl = -p + tauC*rC;
 
@@ -1058,19 +1047,16 @@ void ustruct_2d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
     Bm(2,1,a) = Nwx(2,a)*F(1,2) + F(1,0)*Nwx(1,a);
   }
 
-  Array<double> VxNx(2,eNoNw), DdNx(2,eNoNw);
+  Array<double> VxNx(2,eNoNw);
 
   for (int a = 0; a < eNoNw; a++) {
-    DdNx(0,a) = ddev(0,0)*NxFi(0,a) + ddev(0,1)*NxFi(1,a);
-    DdNx(1,a) = ddev(1,0)*NxFi(0,a) + ddev(1,1)*NxFi(1,a);
-
     VxNx(0,a) = VxFi(0,0)*NxFi(0,a) + VxFi(1,0)*NxFi(1,a);
     VxNx(1,a) = VxFi(0,1)*NxFi(0,a) + VxFi(1,1)*NxFi(1,a);
   }
 
   // Tangent (stiffness) matrices
   //
-  double NxSNx{0.0}, NxNx{0.0}, BtDB{0.0}, 
+  double NxSNx{0.0}, BtDB{0.0}, 
       T1{0.0}, T2{0.0}, T3{0.0},
       Tv{0.0}, Ku{0.0};
 
@@ -1092,23 +1078,19 @@ void ustruct_2d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
       DBm(2,0) = Dm(2,0)*Bm(0,0,b) + Dm(2,1)*Bm(1,0,b) + Dm(2,2)*Bm(2,0,b);
       DBm(2,1) = Dm(2,0)*Bm(0,1,b) + Dm(2,1)*Bm(1,1,b) + Dm(2,2)*Bm(2,1,b);
 
-      NxNx = NxFi(0,a)*NxFi(0,b) + NxFi(1,a)*NxFi(1,b);
 
       // dM1_dV1 + af/am *dM_1/dU_1
       //
       BtDB = Bm(0,0,a)*DBm(0,0) + Bm(1,0,a)*DBm(1,0) + Bm(2,0,a)*DBm(2,0);
       T1   = Jac*rho*vd(0)*Nw(a)*NxFi(0,b);
       T2   = -tauC*Jac*NxFi(0,a)*VxNx(0,b);
-      Tv   = (1.0*(DdNx(0,a)*NxFi(0,b) - DdNx(0,b)*NxFi(0,a))
-           - (NxNx*VxFi(0,0) + NxFi(0,b)*VxNx(0,a)
-           -  NxFi(0,a)*VxNx(0,b)))*mu*Jac;
 
-      Ku   = w*af*(T1 + T2 + Tv + BtDB + NxSNx);
+      Ku   = w*af*(T1 + T2 + BtDB + NxSNx + Kvis_u(0,a,b));
       lKd(0,a,b) = lKd(0,a,b) + Ku;
 
       T1   = am*Jac*rho*Nw(a)*Nw(b);
       T2   = T1 + af*Jac*tauC*rho*NxFi(0,a)*NxFi(0,b);
-      Tv   = af*mu*Jac*NxNx;
+      Tv   = af*Kvis_v(0,a,b);
       lK(0,a,b)  = lK(0,a,b) + w*(T2 + Tv) + afm*Ku;
 
       // dM_1/dV_2 + af/am *dM_1/dU_2
@@ -1117,16 +1099,12 @@ void ustruct_2d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
       T1   = Jac*rho*vd(0)*Nw(a)*NxFi(1,b);
       T2   = -tauC*Jac*NxFi(0,a)*VxNx(1,b);
       T3   = Jac*rCl*(NxFi(0,a)*NxFi(1,b) - NxFi(1,a)*NxFi(0,b));
-      Tv   = (1.0*(DdNx(0,a)*NxFi(1,b) - DdNx(0,b)*NxFi(1,a))
-           - (NxNx*VxFi(0,1) + NxFi(0,b)*VxNx(1,a)
-           -  NxFi(0,a)*VxNx(1,b)))*mu*Jac;
 
-      Ku   = w*af*(T1 + T2 + T3 + Tv + BtDB);
+      Ku   = w*af*(T1 + T2 + T3 + BtDB + Kvis_u(1,a,b));
       lKd(1,a,b) = lKd(1,a,b) + Ku;
 
       T2   = af*Jac*tauC*rho*NxFi(0,a)*NxFi(1,b);
-      Tv   = af*mu*Jac*(NxFi(1,a)*NxFi(0,b)
-           - NxFi(0,a)*NxFi(1,b));
+      Tv   = af*Kvis_v(1,a,b);
       lK(1,a,b) = lK(1,a,b) + w*(T2 + Tv) + afm*Ku;
 
       // dM_2/dV_1 + af/am *dM_2/dU_1
@@ -1135,16 +1113,12 @@ void ustruct_2d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
       T1   = Jac*rho*vd(1)*Nw(a)*NxFi(0,b);
       T2   = -tauC*Jac*NxFi(1,a)*VxNx(0,b);
       T3   = Jac*rCl*(NxFi(1,a)*NxFi(0,b) - NxFi(0,a)*NxFi(1,b));
-      Tv   = (1.0*(DdNx(1,a)*NxFi(0,b) - DdNx(1,b)*NxFi(0,a))
-           - (NxNx*VxFi(1,0) + NxFi(1,b)*VxNx(0,a)
-           -  NxFi(1,a)*VxNx(0,b)))*mu*Jac;
 
-      Ku   = w*af*(T1 + T2 + T3 + Tv + BtDB);
+      Ku   = w*af*(T1 + T2 + T3 + BtDB + Kvis_u(2,a,b));
       lKd(2,a,b) = lKd(2,a,b) + Ku;
 
       T2   = af*Jac*tauC*rho*NxFi(1,a)*NxFi(0,b);
-      Tv   = af*mu*Jac*(NxFi(0,a)*NxFi(1,b)
-           - NxFi(1,a)*NxFi(0,b));
+      Tv   = af*Kvis_v(2,a,b);
       lK(3,a,b) = lK(3,a,b) + w*(T2 + Tv) + afm*Ku;
 
       // dM_2/dV_2 + af/am *dM_2/dU_2
@@ -1152,16 +1126,13 @@ void ustruct_2d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
       BtDB = Bm(0,1,a)*DBm(0,1) + Bm(1,1,a)*DBm(1,1) + Bm(2,1,a)*DBm(2,1);
       T1   = Jac*rho*vd(1)*Nw(a)*NxFi(1,b);
       T2   = -tauC*Jac*NxFi(1,a)*VxNx(1,b);
-      Tv   = (1.0*(DdNx(1,a)*NxFi(1,b) - DdNx(1,b)*NxFi(1,a))
-           - (NxNx*VxFi(1,1) + NxFi(1,b)*VxNx(1,a)
-           -  NxFi(1,a)*VxNx(1,b)))*mu*Jac;
 
-      Ku   = w*af*(T1 + T2 + Tv + BtDB + NxSNx);
+      Ku   = w*af*(T1 + T2 + BtDB + NxSNx + Kvis_u(3,a,b));
       lKd(3,a,b) = lKd(3,a,b) + Ku;
 
       T1   = am*Jac*rho*Nw(a)*Nw(b);
       T2   = T1 + af*Jac*tauC*rho*NxFi(1,a)*NxFi(1,b);
-      Tv   = af*mu*Jac*NxNx;
+      Tv   = af*Kvis_v(3,a,b);
       lK(4,a,b) = lK(4,a,b) + w*(T2 + Tv) + afm*Ku;
     }
   }
@@ -1209,8 +1180,6 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
   const double dt = com_mod.dt;
 
   // Define parameters
-  //
-  double mu = dmn.prop[PhysicalProperyType::solid_viscosity];
 
   Vector<double> fb(3);
   fb[0] = dmn.prop[PhysicalProperyType::f_x];
@@ -1302,17 +1271,13 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
   double Ja = 0;
   mat_models::get_pk2cc_dev(com_mod, cep_mod, eq.dmn[cDmn], F, nFn, fN, ya_g, Siso, Dm, Ja);
 
-  // Viscous contribution
-  //
-  // Velocity gradient in current configuration
-  auto VxFi = mat_mul(vx, Fi);
+  // Viscous 2nd Piola-Kirchhoff stress and tangent contributions
+  Array<double> Svis(3,3);
+  Array3<double> Kvis_u(9, eNoNw, eNoNw);
+  Array3<double> Kvis_v(9, eNoNw, eNoNw);
+  
+  mat_models_carray::get_visc_stress_and_tangent<3>(dmn, eNoNw, Nwx, vx, F, Svis, Kvis_u, Kvis_v);
 
-  // Deviatoric strain tensor
-  auto ddev = mat_dev(mat_symm(VxFi,3), 3);
-
-  // 2nd Piola-Kirchhoff stress due to viscosity
-  auto Svis = mat_mul(ddev, transpose(Fi));
-  Svis = 2.0 * mu * Jac * mat_mul(Fi, Svis);
 
   // Compute rho and beta depending on the volumetric penalty model
   //
@@ -1333,7 +1298,7 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
     tauC = 0.0;
   }
 
-  // Total isochoric 2nd Piola-Kirchhoff stress
+  // Total isochoric 2nd Piola-Kirchhoff stress (Elastic + Viscous)
   Siso = Siso + Svis;
 
   // Deviatoric 1st Piola-Kirchhoff tensor (P)
@@ -1350,6 +1315,8 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
     NxFi(2,a) = Nwx(0,a)*Fi(0,2) + Nwx(1,a)*Fi(1,2) + Nwx(2,a)*Fi(2,2);
   } 
 
+  // Velocity gradient in current configuration
+  auto VxFi = mat_mul(vx, Fi);
   double rC  = beta*pd + VxFi(0,0) + VxFi(1,1) + VxFi(2,2);
   double rCl = -p + tauC*rC;
 
@@ -1404,13 +1371,9 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
     Bm(5,2,a) = (Nwx(2,a)*F(2,0) + F(2,2)*Nwx(0,a));
   }
 
-  Array<double> VxNx(3,eNoNw), DdNx(3,eNoNw);
+  Array<double> VxNx(3,eNoNw);
 
   for (int a = 0; a < eNoNw; a++) {
-    DdNx(0,a) = ddev(0,0)*NxFi(0,a) + ddev(0,1)*NxFi(1,a) + ddev(0,2)*NxFi(2,a);
-    DdNx(1,a) = ddev(1,0)*NxFi(0,a) + ddev(1,1)*NxFi(1,a) + ddev(1,2)*NxFi(2,a);
-    DdNx(2,a) = ddev(2,0)*NxFi(0,a) + ddev(2,1)*NxFi(1,a) + ddev(2,2)*NxFi(2,a);
-
     VxNx(0,a) = VxFi(0,0)*NxFi(0,a) + VxFi(1,0)*NxFi(1,a) + VxFi(2,0)*NxFi(2,a);
     VxNx(1,a) = VxFi(0,1)*NxFi(0,a) + VxFi(1,1)*NxFi(1,a) + VxFi(2,1)*NxFi(2,a);
     VxNx(2,a) = VxFi(0,2)*NxFi(0,a) + VxFi(1,2)*NxFi(1,a) + VxFi(2,2)*NxFi(2,a);
@@ -1420,7 +1383,7 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
   //
   double r13 = 1.0 / 3.0;
   double r23 = 2.0 / 3.0;
-  double NxSNx{0.0}, BtDB{0.0}, NxNx{0.0};
+  double NxSNx{0.0}, BtDB{0.0};
   double Tv{0.0}, Ku{0.0};
 
   for (int b = 0; b < eNoNw; b++) {
@@ -1432,7 +1395,6 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
        + Nwx(2,a)*Siso(2,1)*Nwx(1,b) + Nwx(2,a)*Siso(2,2)*Nwx(2,b);
 
       auto DBm = mat_mul(Dm, Bm.rslice(b));
-      NxNx = NxFi(0,a)*NxFi(0,b) + NxFi(1,a)*NxFi(1,b) + NxFi(2,a)*NxFi(2,b);
 
       // dM1_dV1 + af/am *dM_1/dU_1
       BtDB = Bm(0,0,a)*DBm(0,0) + Bm(1,0,a)*DBm(1,0) +
@@ -1440,16 +1402,13 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
              Bm(4,0,a)*DBm(4,0) + Bm(5,0,a)*DBm(5,0);
       T1   = Jac*rho*vd(0)*Nw(a)*NxFi(0,b);
       T2   = -tauC*Jac*NxFi(0,a)*VxNx(0,b);
-      Tv   = (2.0*(DdNx(0,a)*NxFi(0,b) - DdNx(0,b)*NxFi(0,a))
-           - (NxNx*VxFi(0,0) + NxFi(0,b)*VxNx(0,a)
-           -  r23*NxFi(0,a)*VxNx(0,b)))*mu*Jac;
  
-      Ku   = w*af*(T1 + T2 + Tv + BtDB + NxSNx);
+      Ku   = w*af*(T1 + T2 + BtDB + NxSNx + Kvis_u(0,a,b));
       lKd(0,a,b) = lKd(0,a,b) + Ku;
  
       T1   = am*Jac*rho*Nw(a)*Nw(b);
       T2   = T1 + af*Jac*tauC*rho*NxFi(0,a)*NxFi(0,b);
-      Tv   = af*mu*Jac*(r13*NxFi(0,a)*NxFi(0,b) + NxNx);
+      Tv   = af*Kvis_v(0,a,b);
       lK(0,a,b)  = lK(0,a,b) + w*(T2 + Tv) + afm*Ku;
 
       // dM_1/dV_2 + af/am *dM_1/dU_2
@@ -1459,16 +1418,12 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
       T1   = Jac*rho*vd(0)*Nw(a)*NxFi(1,b);
       T2   = -tauC*Jac*NxFi(0,a)*VxNx(1,b);
       T3   = Jac*rCl*(NxFi(0,a)*NxFi(1,b) - NxFi(1,a)*NxFi(0,b));
-      Tv   = (2.0*(DdNx(0,a)*NxFi(1,b) - DdNx(0,b)*NxFi(1,a))
-           - (NxNx*VxFi(0,1) + NxFi(0,b)*VxNx(1,a)
-           -  r23*NxFi(0,a)*VxNx(1,b)))*mu*Jac;
  
-      Ku   = w*af*(T1 + T2 + T3 + Tv + BtDB);
+      Ku   = w*af*(T1 + T2 + T3 + BtDB + Kvis_u(1,a,b));
       lKd(1,a,b) = lKd(1,a,b) + Ku;
  
       T2   = af*Jac*tauC*rho*NxFi(0,a)*NxFi(1,b);
-      Tv   = af*mu*Jac*(NxFi(1,a)*NxFi(0,b)
-           - r23*NxFi(0,a)*NxFi(1,b));
+      Tv   = af*Kvis_v(1,a,b);
       lK(1,a,b) = lK(1,a,b) + w*(T2 + Tv) + afm*Ku;
 
       // dM_1/dV_3 + af/am *dM_1/dU_3
@@ -1479,16 +1434,12 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
       T1   = Jac*rho*vd(0)*Nw(a)*NxFi(2,b);
       T2   = -tauC*Jac*NxFi(0,a)*VxNx(2,b);
       T3   = Jac*rCl*(NxFi(0,a)*NxFi(2,b) - NxFi(2,a)*NxFi(0,b));
-      Tv   = (2.0*(DdNx(0,a)*NxFi(2,b) - DdNx(0,b)*NxFi(2,a))
-           - (NxNx*VxFi(0,2) + NxFi(0,b)*VxNx(2,a)
-           -  r23*NxFi(0,a)*VxNx(2,b)))*mu*Jac;
  
-      Ku   = w*af*(T1 + T2 + T3 + Tv + BtDB);
+      Ku   = w*af*(T1 + T2 + T3 + BtDB + Kvis_u(2,a,b));
       lKd(2,a,b) = lKd(2,a,b) + Ku;
  
       T2   = af*Jac*tauC*rho*NxFi(0,a)*NxFi(2,b);
-      Tv   = af*mu*Jac*(NxFi(2,a)*NxFi(0,b)
-           - r23*NxFi(0,a)*NxFi(2,b));
+      Tv   = af*Kvis_v(2,a,b);
       lK(2,a,b) = lK(2,a,b) + w*(T2 + Tv) + afm*Ku;
 
       // dM_2/dV_1 + af/am *dM_2/dU_1
@@ -1500,16 +1451,12 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
       T1   = Jac*rho*vd(1)*Nw(a)*NxFi(0,b);
       T2   = -tauC*Jac*NxFi(1,a)*VxNx(0,b);
       T3   = Jac*rCl*(NxFi(1,a)*NxFi(0,b) - NxFi(0,a)*NxFi(1,b));
-      Tv   = (2.0*(DdNx(1,a)*NxFi(0,b) - DdNx(1,b)*NxFi(0,a))
-           - (NxNx*VxFi(1,0) + NxFi(1,b)*VxNx(0,a)
-           -  r23*NxFi(1,a)*VxNx(0,b)))*mu*Jac;
  
-      Ku   = w*af*(T1 + T2 + T3 + Tv + BtDB);
+      Ku   = w*af*(T1 + T2 + T3 + BtDB + Kvis_u(3,a,b));
       lKd(3,a,b) = lKd(3,a,b) + Ku;
  
       T2   = af*Jac*tauC*rho*NxFi(1,a)*NxFi(0,b);
-      Tv   = af*mu*Jac*(NxFi(0,a)*NxFi(1,b) 
-           - r23*NxFi(1,a)*NxFi(0,b));
+      Tv   = af*Kvis_v(3,a,b);
 
       lK(4,a,b) = lK(4,a,b) + w*(T2 + Tv) + afm*Ku;
 
@@ -1523,16 +1470,13 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
 
       T2   = -tauC*Jac*NxFi(1,a)*VxNx(1,b);
 
-      Tv   = (2.0*(DdNx(1,a)*NxFi(1,b) - DdNx(1,b)*NxFi(1,a))
-           - (NxNx*VxFi(1,1) + NxFi(1,b)*VxNx(1,a)
-           -  r23*NxFi(1,a)*VxNx(1,b)))*mu*Jac;
  
-      Ku   = w*af*(T1 + T2 + Tv + BtDB + NxSNx);
+      Ku   = w*af*(T1 + T2 + BtDB + NxSNx + Kvis_u(4,a,b));
       lKd(4,a,b) = lKd(4,a,b) + Ku;
  
       T1   = am*Jac*rho*Nw(a)*Nw(b);
       T2   = T1 + af*Jac*tauC*rho*NxFi(1,a)*NxFi(1,b);
-      Tv   = af*mu*Jac*(r13*NxFi(1,a)*NxFi(1,b) + NxNx);
+      Tv   = af*Kvis_v(4,a,b);
       lK(5,a,b) = lK(5,a,b) + w*(T2 + Tv) + afm*Ku;
 
 
@@ -1546,16 +1490,12 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
       T2   = -tauC*Jac*NxFi(1,a)*VxNx(2,b);
       T3   = Jac*rCl*(NxFi(1,a)*NxFi(2,b) - NxFi(2,a)*NxFi(1,b));
 
-      Tv   = (2.0*(DdNx(1,a)*NxFi(2,b) - DdNx(1,b)*NxFi(2,a)) 
-           - (NxNx*VxFi(1,2) + NxFi(1,b)*VxNx(2,a) 
-           -  r23*NxFi(1,a)*VxNx(2,b)))*mu*Jac;
  
-      Ku   = w*af*(T1 + T2 + T3 + Tv + BtDB);
+      Ku   = w*af*(T1 + T2 + T3 + BtDB + Kvis_u(5,a,b));
       lKd(5,a,b) = lKd(5,a,b) + Ku;
  
       T2   = af*Jac*tauC*rho*NxFi(1,a)*NxFi(2,b);
-      Tv   = af*mu*Jac*(NxFi(2,a)*NxFi(1,b)
-           - r23*NxFi(1,a)*NxFi(2,b));
+      Tv   = af*Kvis_v(5,a,b);
       lK(6,a,b) = lK(6,a,b) + w*(T2 + Tv) + afm*Ku;
 
       // dM_3/dV_1 + af/am *dM_3/dU_1
@@ -1567,17 +1507,12 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
       T1   = Jac*rho*vd(2)*Nw(a)*NxFi(0,b);
       T2   = -tauC*Jac*NxFi(2,a)*VxNx(0,b);
       T3   = Jac*rCl*(NxFi(2,a)*NxFi(0,b) - NxFi(0,a)*NxFi(2,b));
-
-      Tv   = (2.0*(DdNx(2,a)*NxFi(0,b) - DdNx(2,b)*NxFi(0,a)) 
-           - (NxNx*VxFi(2,0) + NxFi(2,b)*VxNx(0,a) 
-           -  r23*NxFi(2,a)*VxNx(0,b)))*mu*Jac;
  
-      Ku   = w*af*(T1 + T2 + T3 + Tv + BtDB);
+      Ku   = w*af*(T1 + T2 + T3 + BtDB + Kvis_u(6,a,b));
       lKd(6,a,b) = lKd(6,a,b) + Ku;
  
       T2   = af*Jac*tauC*rho*NxFi(2,a)*NxFi(0,b);
-      Tv   = af*mu*Jac*(NxFi(0,a)*NxFi(2,b)
-           - r23*NxFi(2,a)*NxFi(0,b));
+      Tv   = af*Kvis_v(6,a,b);
       lK(8,a,b) = lK(8,a,b) + w*(T2 + Tv) + afm*Ku;
 
       // dM_3/dV_2 + af/am *dM_3/dU_2
@@ -1589,17 +1524,12 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
       T1   = Jac*rho*vd(2)*Nw(a)*NxFi(1,b);
       T2   = -tauC*Jac*NxFi(2,a)*VxNx(1,b);
       T3   = Jac*rCl*(NxFi(2,a)*NxFi(1,b) - NxFi(1,a)*NxFi(2,b));
-
-      Tv   = (2.0*(DdNx(2,a)*NxFi(1,b) - DdNx(2,b)*NxFi(1,a)) 
-           - (NxNx*VxFi(2,1) + NxFi(2,b)*VxNx(1,a) 
-           -  r23*NxFi(2,a)*VxNx(1,b)))*mu*Jac;
  
-      Ku   = w*af*(T1 + T2 + T3 + Tv + BtDB);
+      Ku   = w*af*(T1 + T2 + T3 + BtDB + Kvis_u(7,a,b));
       lKd(7,a,b) = lKd(7,a,b) + Ku;
  
       T2   = af*Jac*tauC*rho*NxFi(2,a)*NxFi(1,b);
-      Tv   = af*mu*Jac*(NxFi(1,a)*NxFi(2,b) 
-           - r23*NxFi(2,a)*NxFi(1,b));
+      Tv   = af*Kvis_v(7,a,b);
 
       lK(9,a,b) = lK(9,a,b) + w*(T2 + Tv) + afm*Ku;
 
@@ -1611,17 +1541,13 @@ void ustruct_3d_m(ComMod& com_mod, CepMod& cep_mod, const bool vmsFlag, const in
 
       T1   = Jac*rho*vd(2)*Nw(a)*NxFi(2,b);
       T2   = -tauC*Jac*NxFi(2,a)*VxNx(2,b);
-
-      Tv   = (2.0*(DdNx(2,a)*NxFi(2,b) - DdNx(2,b)*NxFi(2,a)) 
-           - (NxNx*VxFi(2,2) + NxFi(2,b)*VxNx(2,a) 
-           -  r23*NxFi(2,a)*VxNx(2,b)))*mu*Jac;
  
-      Ku   = w*af*(T1 + T2 + Tv + BtDB + NxSNx);
+      Ku   = w*af*(T1 + T2 + BtDB + NxSNx + Kvis_u(8,a,b));
       lKd(8,a,b) = lKd(8,a,b) + Ku;
  
       T1   = am*Jac*rho*Nw(a)*Nw(b);
       T2   = T1 + af*Jac*tauC*rho*NxFi(2,a)*NxFi(2,b);
-      Tv   = af*mu*Jac*(r13*NxFi(2,a)*NxFi(2,b) + NxNx);
+      Tv   = af*Kvis_v(8,a,b);
 
       lK(10,a,b) = lK(10,a,b) + w*(T2 + Tv) + afm*Ku;
     }
